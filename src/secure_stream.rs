@@ -1,9 +1,12 @@
-use crate::core_consts::{TOTAL_BUFFER_SIZE, TOTAL_CRYPTO_BUFFER_SIZE};
-use crate::utils::set_buffer;
-use aes_gcm::aead::{generic_array::GenericArray, Aead};
-use aes_gcm::Aes256Gcm;
 use std::io::prelude::*;
 use std::net::TcpStream;
+
+use crate::core_consts::{TOTAL_BUFFER_SIZE, TOTAL_CRYPTO_BUFFER_SIZE};
+use crate::utils::set_buffer;
+
+use aes_gcm::aead::{generic_array::GenericArray, Aead};
+use aes_gcm::Aes256Gcm;
+
 
 pub struct SecureStream<'a> {
     pub tcp_stream: &'a TcpStream,

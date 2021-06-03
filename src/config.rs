@@ -1,12 +1,15 @@
-
-use crate::{crypto, utils::{exit_error, get_blocked_display_name_chars, get_blocked_file_name_chars}};
-
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 use std::env;
+
 extern crate base64;
+use serde::{Deserialize, Serialize};
+
+use crate::{
+	crypto, 
+	utils::{exit_error, get_blocked_display_name_chars, get_blocked_file_name_chars}
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
@@ -310,7 +313,7 @@ pub fn init_config() -> bool {
 
 pub fn create_new_config() {
 
-	let (private_id_bytes, public_id_bytes) = crypto::generate_id_pair();
+	let (private_id_bytes, _) = crypto::generate_id_pair();
 
 	let private_id_string = base64::encode(private_id_bytes);
 

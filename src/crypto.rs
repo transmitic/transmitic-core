@@ -1,5 +1,3 @@
-use std::fs::File;
-use std::io::{Read, Write};
 use ring::{
 	rand,
 	signature::{self, KeyPair},

@@ -1,10 +1,10 @@
-use crate::config::{Config};
-use crate::utils::{exit_error, get_file_size_string, get_blocked_file_name_chars};
-
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::metadata;
-use std::{panic, process, thread, time};
+
+use crate::config::Config;
+use crate::utils::{get_file_size_string, get_blocked_file_name_chars};
+
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SharedFile {

@@ -1,22 +1,34 @@
 use core::time;
-use std::{collections::{HashMap, VecDeque}, fs::OpenOptions, io::SeekFrom, net::TcpStream, panic, path::Path, sync::{Arc, Mutex}, thread};
-use std::{net::SocketAddr};
-
-use crate::{config::{self, Config, TrustedUser}, core_consts::{MSG_CANNOT_SELECT_DIRECTORY, MSG_CLIENT_DIFFIE_PUBLIC, MSG_FILE_CHUNK, MSG_FILE_FINISHED, MSG_FILE_INVALID_FILE, MSG_FILE_SELECTION_CONTINUE, PAYLOAD_OFFSET, TOTAL_BUFFER_SIZE}, crypto, secure_stream::SecureStream, shared_file::{FileToDownload, SharedFile}, utils::{LocalKeyData, get_file_by_path, get_payload_size_from_buffer, get_size_of_directory, request_file_list, set_buffer}};
-
-use aes_gcm::aead::{generic_array::GenericArray, Aead, NewAead};
-use aes_gcm::Aes256Gcm;
-use rand_core::OsRng;
-use ring::{
-	rand,
-	signature::{self, KeyPair},
-};
-use x25519_dalek::EphemeralSecret;
-
 use std::fs;
 use std::fs::metadata;
 use std::fs::File;
 use std::io::prelude::*;
+use std::{
+	collections::{HashMap, VecDeque}, 
+	fs::OpenOptions, 
+	io::SeekFrom, 
+	net::TcpStream, 
+	panic, 
+	path::Path, 
+	sync::{Arc, Mutex}, 
+	thread
+};
+use std::net::SocketAddr;
+
+use crate::{
+	config::{self, Config, TrustedUser}, 
+	core_consts::{MSG_CANNOT_SELECT_DIRECTORY, MSG_CLIENT_DIFFIE_PUBLIC, MSG_FILE_CHUNK, MSG_FILE_FINISHED, MSG_FILE_INVALID_FILE, MSG_FILE_SELECTION_CONTINUE, PAYLOAD_OFFSET, TOTAL_BUFFER_SIZE}, 
+	crypto, 
+	secure_stream::SecureStream, 
+	shared_file::{FileToDownload, SharedFile}, 
+	utils::{LocalKeyData, get_file_by_path, get_payload_size_from_buffer, get_size_of_directory, request_file_list, set_buffer}
+};
+
+use aes_gcm::aead::{generic_array::GenericArray, NewAead};
+use aes_gcm::Aes256Gcm;
+use rand_core::OsRng;
+use ring::signature;
+use x25519_dalek::EphemeralSecret;
 use x25519_dalek::PublicKey;
 
 pub struct OutgoingConnectionManager {
@@ -71,13 +83,13 @@ impl OutgoingConnectionManager {
 	}
 
 	pub fn cancel_all_downloads(&mut self) {
-		for (owner, mut outgoing_connection) in self.outgoing_connections.iter() {
+		for (_, outgoing_connection) in self.outgoing_connections.iter() {
 			let mut outgoing_connection_guard = outgoing_connection
 			.lock()
 			.unwrap_or_else(|poisoned|poisoned.into_inner());
 
 			match &outgoing_connection_guard.active_download {
-				Some(f) => {
+				Some(_) => {
 					//outgoing_connection_guard.active_download = None
 					outgoing_connection_guard.stop_active_download = true;
 					
@@ -92,7 +104,7 @@ impl OutgoingConnectionManager {
 	}
 
 	pub fn cancel_single_download(&mut self, display_name: &String, file_path: &String) {
-		let mut outgoing_connection = self.outgoing_connections.get(display_name).unwrap();
+		let outgoing_connection = self.outgoing_connections.get(display_name).unwrap();
 		let mut outgoing_connection_guard = outgoing_connection
 		.lock()
 		.unwrap_or_else(|poisoned|poisoned.into_inner());
@@ -116,7 +128,7 @@ impl OutgoingConnectionManager {
 	}
 
 	pub fn resume_downloads(&mut self, display_name: &String) {
-		let mut outgoing_connection = self.outgoing_connections.get(display_name).unwrap();
+		let outgoing_connection = self.outgoing_connections.get(display_name).unwrap();
 		let mut outgoing_connection_guard = outgoing_connection
 		.lock()
 		.unwrap_or_else(|poisoned|poisoned.into_inner());
@@ -127,7 +139,7 @@ impl OutgoingConnectionManager {
 	}
 
 	pub fn resume_all_downloads(&mut self) {
-		for (owner, mut outgoing_connection) in self.outgoing_connections.iter() {
+		for (_, outgoing_connection) in self.outgoing_connections.iter() {
 			let mut outgoing_connection_guard = outgoing_connection
 			.lock()
 			.unwrap_or_else(|poisoned|poisoned.into_inner());
@@ -143,7 +155,7 @@ impl OutgoingConnectionManager {
 
 	pub fn pause_all_downloads(&mut self) {
 		self.is_all_paused = true;
-		for (owner, mut outgoing_connection) in self.outgoing_connections.iter() {
+		for (_, outgoing_connection) in self.outgoing_connections.iter() {
 			let mut outgoing_connection_guard = outgoing_connection
 			.lock()
 			.unwrap_or_else(|poisoned|poisoned.into_inner());
@@ -156,7 +168,7 @@ impl OutgoingConnectionManager {
 	}
 
 	pub fn pause_downloads_for_user(&mut self, display_name: &String) {
-		let mut outgoing_connection = self.outgoing_connections.get(display_name).unwrap();
+		let outgoing_connection = self.outgoing_connections.get(display_name).unwrap();
 		let mut outgoing_connection_guard = outgoing_connection
 		.lock()
 		.unwrap_or_else(|poisoned|poisoned.into_inner());
@@ -168,7 +180,7 @@ impl OutgoingConnectionManager {
 	}
 
 	pub fn clear_invalid_downloads(&mut self) {
-		for (owner, mut outgoing_connection) in self.outgoing_connections.iter() {
+		for (_, outgoing_connection) in self.outgoing_connections.iter() {
 			let mut outgoing_connection_guard = outgoing_connection
 			.lock()
 			.unwrap_or_else(|poisoned|poisoned.into_inner());
@@ -181,7 +193,7 @@ impl OutgoingConnectionManager {
 	}
 
 	pub fn clear_finished_downloads(&mut self) {
-		for (owner, mut outgoing_connection) in self.outgoing_connections.iter() {
+		for (_, outgoing_connection) in self.outgoing_connections.iter() {
 			let mut outgoing_connection_guard = outgoing_connection
 			.lock()
 			.unwrap_or_else(|poisoned|poisoned.into_inner());
@@ -508,7 +520,7 @@ pub fn get_local_to_outgoing_secure_stream_cipher(
 			&remote_diffie_signed_public_bytes,
 		) {
 			Err(_) => {
-				panic!(format!("ERROR: Remote signature failure. Verify Public ID is correct for {}", client_connecting_ip));
+				panic!("ERROR: Remote signature failure. Verify Public ID is correct for {}", client_connecting_ip);
 			}
 			_ => {}
 		}

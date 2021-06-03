@@ -1,20 +1,22 @@
-use std::{net::SocketAddr, sync::{Arc, Mutex}, thread};
+use std::{
+	net::SocketAddr, 
+	sync::{Arc, Mutex}, 
+	thread
+};
 
-use crate::{config::{self, Config, ConfigSharedFile, TrustedUser, create_config_dir, get_config, init_config, verify_config}, crypto, incoming::{IncomingConnection, IncomingConnectionManager, client_wait_for_incoming}, outgoing::{OutgoingConnection, OutgoingConnectionManager, handle_outgoing_forever}, shared_file::{FileToDownload, SharedFile}, utils::{LocalKeyData, get_blocked_display_name_chars, get_blocked_file_name_chars}};
-
-// CRYPTO
 extern crate x25519_dalek;
-use aes_gcm::aead::{generic_array::GenericArray, Aead, NewAead};
-use aes_gcm::Aes256Gcm;
-
-use rand_core::OsRng;
 use ring::{
-	rand,
 	signature::{self, KeyPair},
 };
-use x25519_dalek::EphemeralSecret;
-use x25519_dalek::PublicKey;
 
+use crate::{
+	config::{self, Config, ConfigSharedFile, TrustedUser, create_config_dir, get_config, init_config, verify_config}, 
+	crypto, 
+	incoming::{IncomingConnection, IncomingConnectionManager, client_wait_for_incoming}, 
+	outgoing::{OutgoingConnection, OutgoingConnectionManager, handle_outgoing_forever}, 
+	shared_file::FileToDownload, 
+	utils::{LocalKeyData, get_blocked_display_name_chars, get_blocked_file_name_chars}
+};
 
 pub struct ReturnCurrentUser {
 	pub display_name: String,
@@ -258,7 +260,7 @@ impl TransmiticCore {
 		
 		self.incoming_connections.reset_all_connections_for_all_users();
 
-		for (display_name, outgoing_connection) in self.outgoing_connection_manager.outgoing_connections.iter_mut() {
+		for (_, outgoing_connection) in self.outgoing_connection_manager.outgoing_connections.iter_mut() {
 			let mut outgoing_connection_guard = outgoing_connection
 			.lock()
 			.unwrap_or_else(|poisoned| poisoned.into_inner());

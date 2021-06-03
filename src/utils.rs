@@ -1,7 +1,15 @@
+use std::{
+	fs::{self, metadata}, 
+	process
+};
+
 use ring::signature;
 
-use crate::{core_consts::{MSG_FILE_LIST, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE, PAYLOAD_OFFSET, PAYLOAD_SIZE_LEN}, secure_stream::SecureStream, shared_file::{SharedFile, remove_invalid_files}};
-use std::{fs::{self, metadata}, process};
+use crate::{
+	core_consts::{MSG_FILE_LIST, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE, PAYLOAD_OFFSET, PAYLOAD_SIZE_LEN}, 
+	secure_stream::SecureStream, 
+	shared_file::{SharedFile, remove_invalid_files}
+};
 
 // TODO should be core?
 pub fn get_blocked_file_name_chars() -> String {

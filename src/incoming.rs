@@ -1,22 +1,31 @@
 use core::time;
-use std::{collections::{HashMap, VecDeque}, fs::OpenOptions, io::SeekFrom, net::{Shutdown, TcpListener, TcpStream}, panic, path::Path, sync::{Arc, Mutex, MutexGuard}, thread};
-use std::{net::SocketAddr};
+use std::io::prelude::*;
+use std::{
+	collections::HashMap, 
+	fs::OpenOptions, 
+	io::SeekFrom, 
+	net::{Shutdown, TcpListener, TcpStream}, 
+	panic, 
+	sync::{Arc, Mutex, MutexGuard}, 
+	thread,
+};
 
-use crate::{config::{self, Config, TrustedUser}, core_consts::{MAX_DATA_SIZE, MSG_CANNOT_SELECT_DIRECTORY, MSG_CLIENT_DIFFIE_PUBLIC, MSG_FILE_CHUNK, MSG_FILE_FINISHED, MSG_FILE_INVALID_FILE, MSG_FILE_LIST, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE, MSG_FILE_SELECTION_CONTINUE, MSG_SERVER_DIFFIE_PUBLIC, PAYLOAD_OFFSET, TOTAL_BUFFER_SIZE}, crypto, secure_stream::SecureStream, shared_file::{FileToDownload, SharedFile, get_everything_file}, utils::{LocalKeyData, get_file_by_path, get_payload_size_from_buffer, get_size_of_directory, request_file_list, set_buffer}};
+use crate::{
+	config::{Config, TrustedUser}, 
+	core_consts::{MAX_DATA_SIZE, MSG_CANNOT_SELECT_DIRECTORY, MSG_FILE_CHUNK, MSG_FILE_FINISHED, MSG_FILE_INVALID_FILE, MSG_FILE_LIST, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE, MSG_FILE_SELECTION_CONTINUE, MSG_SERVER_DIFFIE_PUBLIC, PAYLOAD_OFFSET, TOTAL_BUFFER_SIZE}, 
+	crypto, 
+	secure_stream::SecureStream, 
+	shared_file::{SharedFile, get_everything_file}, 
+	utils::{LocalKeyData, get_file_by_path, get_payload_size_from_buffer, set_buffer}
+};
 
-use aes_gcm::aead::{generic_array::GenericArray, Aead, NewAead};
+use aes_gcm::aead::{generic_array::GenericArray, NewAead};
 use aes_gcm::Aes256Gcm;
 use rand_core::OsRng;
 use ring::{
-	rand,
-	signature::{self, KeyPair},
+	signature::{self},
 };
 use x25519_dalek::EphemeralSecret;
-
-use std::fs;
-use std::fs::metadata;
-use std::fs::File;
-use std::io::prelude::*;
 use x25519_dalek::PublicKey;
 
 
