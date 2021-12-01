@@ -58,6 +58,21 @@ impl Config {
         return Ok(Config { first_start, config_file, local_key_pair, local_private_key_bytes });
     }
 
+    pub fn add_new_user(&mut self, new_nickname: String, new_public_id: String, new_ip: String, new_port: String) -> Result<(), Box<dyn Error>> {
+        let mut new_config_file = self.config_file.clone();
+        let shared_user = SharedUser {
+            public_id: new_public_id,
+            nickname: new_nickname,
+            ip: new_ip,
+            port: new_port,
+            allowed: true,
+        };
+        new_config_file.shared_users.push(shared_user);
+        self.write_and_set_config(new_config_file)?;
+        
+        return Ok(());
+    }
+
     pub fn create_new_id(&mut self) -> Result<(), Box<dyn Error>> {
         let (private_id_bytes, _) = crypto::generate_id_pair().unwrap();
         let private_id_string = base64::encode(private_id_bytes);
