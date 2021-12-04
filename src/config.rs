@@ -23,8 +23,9 @@ pub struct ConfigSharedFile {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SharedUser {
-    pub public_id: String,
+    // Sanitize new fields!
     pub nickname: String,
+    pub public_id: String,
     pub ip: String,
     pub port: String,
     pub allowed: bool,
@@ -32,6 +33,7 @@ pub struct SharedUser {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct ConfigFile {
+    // Sanitize new fields!
     my_private_id: String,
     shared_users: Vec<SharedUser>,
     shared_files: Vec<ConfigSharedFile>,
@@ -70,7 +72,7 @@ impl Config {
             allowed: true,
         };
         new_config_file.shared_users.push(shared_user);
-        self.write_and_set_config(new_config_file)?;
+        self.write_and_set_config(&mut new_config_file)?;
 
         return Ok(());
     }
@@ -81,7 +83,7 @@ impl Config {
         
         let mut new_config_file = self.config_file.clone();
         new_config_file.my_private_id = private_id_string;
-        self.write_and_set_config(new_config_file)?;
+        self.write_and_set_config(&mut new_config_file)?;
 
         // TODO move this to write_and_set_config?
         let local_private_key_bytes = crypto::get_bytes_from_base64_str(&self.config_file.my_private_id)?;
@@ -114,14 +116,14 @@ impl Config {
     pub fn set_port(&mut self, port: String) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
         new_config_file.sharing_port = port;
-        self.write_and_set_config(new_config_file)?;
+        self.write_and_set_config(&mut new_config_file)?;
 
         return Ok(());
     }
 
-    fn write_and_set_config(&mut self, config_file: ConfigFile) -> Result<(), Box<dyn Error>> {
-        write_config(&config_file)?;
-        self.config_file = config_file;
+    fn write_and_set_config(&mut self, config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
+        write_config(config_file)?;
+        self.config_file = config_file.to_owned();
 
         return Ok(());
     }
@@ -164,37 +166,51 @@ fn create_new_config() -> Result<(), Box<dyn Error>> {
 
     let private_id_string = base64::encode(private_id_bytes);
 
-    let empty_config: ConfigFile = ConfigFile {
+    let mut empty_config: ConfigFile = ConfigFile {
         my_private_id: private_id_string,
         shared_users: Vec::new(),
         shared_files: Vec::new(),
         sharing_port: "7878".to_string(),
     };
 
-    write_config(&empty_config)?;
+    write_config(&mut empty_config)?;
     return Ok(());
 }
 
-fn write_config(config_file: &ConfigFile) -> Result<(), Box<dyn Error>> {
-    // TODO Sanitize the JSON.
-    // trim all strings
-    // sort strings by keys
-    // should verify_config call sanitize and return the new config?
-    //  would this always support reading and writing without issue?
-
+fn write_config(config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
     verify_config(config_file)?;
     let config_path = get_path_config_json()?;
-    let config_str = serde_json::to_string(&config_file)?;
+    let config_str = serde_json::to_string_pretty(config_file)?;
     fs::write(config_path, config_str)?;
     return Ok(());
 }
 
-fn verify_config(config_file: &ConfigFile) -> Result<(), Box<dyn Error>> {
+fn verify_config(config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
+    sanitize_config(config_file);
     verify_config_port(&config_file.sharing_port)?;
     verify_config_my_private_id(&config_file.my_private_id)?;
     verify_config_shared_users(&config_file.shared_users)?;
 
     return Ok(());
+}
+
+fn sanitize_config(config_file: &mut ConfigFile) {
+    // DO A custom serde serializer that trims all strings?
+
+    // trim
+    config_file.my_private_id = config_file.my_private_id.trim().to_string();
+    config_file.sharing_port = config_file.sharing_port.trim().to_string();
+    
+    // Sort shared users by nickname
+    config_file.shared_users.sort_by_key(|x| x.nickname.clone());
+
+    // Trim shared users strings
+    for user in config_file.shared_users.iter_mut() {
+        user.nickname = user.nickname.trim().to_string();
+        user.public_id = user.public_id.trim().to_string();
+        user.ip = user.ip.trim().to_string();
+        user.port = user.port.trim().to_string();
+    }
 }
 
 fn verify_config_port(port: &String) -> Result<(), Box<dyn Error>> {
@@ -219,8 +235,12 @@ fn get_blocked_file_name_chars() -> String {
 
 fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<dyn Error>> {
     // TODO
-    // strip
-    // not empty
+    // Block duplicate PublicIDs?
+    //  this would allow for an easy deployment of a known/preshared key. But is that safe without setting a flag?
+    // Block IPs?
+    //  prevent accidently adding the wrong IP, but the PublicID would prevent any issue
+    //  block IP:port combos instead?
+    //  running multiple transmitic instances on one box?
 
     // Check duplicate names
     for user in shared_users {
@@ -296,7 +316,7 @@ fn read_config() -> Result<ConfigFile, Box<dyn Error>> {
 	}
 
 	let config_string = fs::read_to_string(&config_path)?;
-	let config_file: ConfigFile;
+	let mut config_file: ConfigFile;
     match serde_json::from_str(&config_string.clone()) {
 		Ok(c) => config_file = c,
 		Err(e) => {
@@ -308,9 +328,7 @@ fn read_config() -> Result<ConfigFile, Box<dyn Error>> {
 		}
 	};
 
-    // TODO Sanitize the json. Trim all strings.
-
-    verify_config(&config_file)?;
+    verify_config(&mut config_file)?;
 
     return Ok(config_file);
 
