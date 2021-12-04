@@ -5,10 +5,7 @@ use ring::{
 	signature::{self, KeyPair},
 };
 
-use crate::{
-	config::{self, Config, ConfigSharedFile}, 
-	crypto, 
-};
+use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto};
 
 pub struct LocalKeyData {
 	pub local_key_pair: signature::Ed25519KeyPair,
@@ -56,6 +53,10 @@ impl TransmiticCore {
 
     pub fn get_my_sharing_state(&self) -> String {
         return self.sharing_state.clone();
+    }
+
+    pub fn get_shared_users(&self) -> Vec<SharedUser> {
+        return self.config.get_shared_users();
     }
 
     pub fn get_sharing_port(&self) -> String {

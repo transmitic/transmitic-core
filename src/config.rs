@@ -99,6 +99,10 @@ impl Config {
         return public_id_string;
     }
 
+    pub fn get_shared_users(&self) -> Vec<SharedUser> {
+        return self.config_file.shared_users.clone();
+    }
+
     pub fn get_sharing_port(&self) -> String {
         return self.config_file.sharing_port.clone();
     }
@@ -174,6 +178,7 @@ fn create_new_config() -> Result<(), Box<dyn Error>> {
 fn write_config(config_file: &ConfigFile) -> Result<(), Box<dyn Error>> {
     // TODO Sanitize the JSON.
     // trim all strings
+    // sort strings by keys
     // should verify_config call sanitize and return the new config?
     //  would this always support reading and writing without issue?
 
