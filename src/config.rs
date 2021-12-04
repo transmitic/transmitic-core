@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -69,7 +70,7 @@ impl Config {
         };
         new_config_file.shared_users.push(shared_user);
         self.write_and_set_config(new_config_file)?;
-        
+
         return Ok(());
     }
 
@@ -180,6 +181,7 @@ fn write_config(config_file: &ConfigFile) -> Result<(), Box<dyn Error>> {
 fn verify_config(config_file: &ConfigFile) -> Result<(), Box<dyn Error>> {
     verify_config_port(&config_file.sharing_port)?;
     verify_config_my_private_id(&config_file.my_private_id)?;
+    verify_config_shared_users(&config_file.shared_users)?;
 
     return Ok(());
 }
@@ -197,6 +199,59 @@ fn verify_config_my_private_id(my_private_id: &String) -> Result<(), Box<dyn Err
         Ok(_) => return Ok(()),
         Err(e) => Err(format!("Invalid Private ID. {}", e.to_string()))?,
     }
+}
+
+fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<dyn Error>> {
+    // TODO
+    // strip
+    // not empty
+    // no invalid characters
+    // no filenames characters
+
+    // Check duplicate names
+    for user in shared_users {
+        let mut user_count = 0;
+        for userj in shared_users {
+            if user.nickname == userj.nickname {
+                user_count += 1;
+            }
+        }
+
+        if user_count > 1 {
+            return Err(format!("Nicknames cannot be repeated. '{}' was found '{}' times.", user.nickname, user_count))?;
+        }
+    }
+
+    // Verify port
+    for user in shared_users {
+        match verify_config_port(&user.port) {
+            Ok(_) => {},
+            Err(e) => Err(format!("{}'s port is invalid. {}", user.nickname, e.to_string()))?,
+        }
+    }
+
+    // Verify public id
+    for user in shared_users {
+        let public_id = match crypto::get_bytes_from_base64_str(&user.public_id) {
+            Ok(public_id) => public_id,
+            Err(e) => Err(format!("{}'s PublicID is invalid. Bad encoding. {}", user.nickname, e.to_string()))?,
+        };
+        // TODO catch the panic on failure?
+        let parsed_id = signature::UnparsedPublicKey::new(&signature::ED25519, public_id);
+
+    }
+
+    // Verify full ip and port address
+    for user in shared_users {
+        let full_address = format!("{}:{}", user.ip, user.port);
+        let ip_parse: Result<SocketAddr, _> = full_address.parse();
+        match ip_parse {
+            Ok(_) => {},
+            Err(e) => Err(format!("Full address of '{}', '{}' is not valid. Check IP and port. {}", user.nickname, full_address, e.to_string()))? ,
+        }
+    }
+    
+    return Ok(());
 }
 
 fn read_config() -> Result<ConfigFile, Box<dyn Error>> {
