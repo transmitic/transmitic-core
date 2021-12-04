@@ -8,6 +8,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 extern crate base64;
+use aes_gcm::aead::generic_array::typenum::private::IsNotEqualPrivate;
 use ring::signature;
 use ring::signature::KeyPair;
 use serde::{Deserialize, Serialize};
@@ -171,6 +172,11 @@ fn create_new_config() -> Result<(), Box<dyn Error>> {
 }
 
 fn write_config(config_file: &ConfigFile) -> Result<(), Box<dyn Error>> {
+    // TODO Sanitize the JSON.
+    // trim all strings
+    // should verify_config call sanitize and return the new config?
+    //  would this always support reading and writing without issue?
+
     verify_config(config_file)?;
     let config_path = get_path_config_json()?;
     let config_str = serde_json::to_string(&config_file)?;
@@ -201,12 +207,15 @@ fn verify_config_my_private_id(my_private_id: &String) -> Result<(), Box<dyn Err
     }
 }
 
+fn get_blocked_file_name_chars() -> String {
+    let block_chars = String::from("/\\:*?\"<>|");
+    return block_chars;
+}
+
 fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<dyn Error>> {
     // TODO
     // strip
     // not empty
-    // no invalid characters
-    // no filenames characters
 
     // Check duplicate names
     for user in shared_users {
@@ -222,33 +231,50 @@ fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<
         }
     }
 
-    // Verify port
     for user in shared_users {
+
+        // Verify nickname
+        if user.nickname == "" {
+            Err("Nickname cannot be empty.")?;
+        }
+        for c in get_blocked_file_name_chars().chars() {
+            if user.nickname.contains(c) {
+                return Err(format!("Nickname '{}' contains the character '{}' which is not allowed. These characters are not allowed:   {}'", user.nickname, c, get_blocked_file_name_chars()))?;
+            }
+        }
+
+        // Verify port
+        if user.port == "" {
+            Err(format!("Port for '{}' cannot be empty", user.nickname))?;
+        }
         match verify_config_port(&user.port) {
             Ok(_) => {},
             Err(e) => Err(format!("{}'s port is invalid. {}", user.nickname, e.to_string()))?,
         }
-    }
 
-    // Verify public id
-    for user in shared_users {
+        // Verify public id
+        if user.public_id == "" {
+            Err(format!("PublicID for '{}' cannot be empty", user.nickname))?;
+        }
         let public_id = match crypto::get_bytes_from_base64_str(&user.public_id) {
             Ok(public_id) => public_id,
             Err(e) => Err(format!("{}'s PublicID is invalid. Bad encoding. {}", user.nickname, e.to_string()))?,
         };
-        // TODO catch the panic on failure?
+        // TODO catch the panic on failure? There's no Result here???
         let parsed_id = signature::UnparsedPublicKey::new(&signature::ED25519, public_id);
 
-    }
-
-    // Verify full ip and port address
-    for user in shared_users {
+        // Verify full ip and port address
+        if user.ip == "" {
+            Err(format!("IP Address for '{}' cannot be empty", user.nickname))?;
+        }
         let full_address = format!("{}:{}", user.ip, user.port);
         let ip_parse: Result<SocketAddr, _> = full_address.parse();
         match ip_parse {
             Ok(_) => {},
             Err(e) => Err(format!("Full address of '{}', '{}' is not valid. Check IP and port. {}", user.nickname, full_address, e.to_string()))? ,
         }
+
+
     }
     
     return Ok(());
@@ -276,6 +302,8 @@ fn read_config() -> Result<ConfigFile, Box<dyn Error>> {
             return Err(exit_error)?;
 		}
 	};
+
+    // TODO Sanitize the json. Trim all strings.
 
     verify_config(&config_file)?;
 
