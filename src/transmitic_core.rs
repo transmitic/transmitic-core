@@ -89,4 +89,16 @@ impl TransmiticCore {
         self.config.set_user_is_allowed_state(nickname, is_allowed)?;
         return Ok(());
     }
+
+    pub fn update_user(&mut self, nickname: String, new_public_id: String, new_ip: String, new_port: String) -> Result<(), Box<dyn Error>> {
+        // TODO support updating the nickanme
+        // Need to pull existing name and public id from UI and new nickname and public id
+        // If nickname changes, need to write config, stop existing download, wait for existing download to stop, 
+        //  change name of download folder, then allow update_user function to return.
+
+        self.config.update_user(nickname, new_public_id, new_ip, new_port)?;
+
+        return Ok(());
+    }
+
 }

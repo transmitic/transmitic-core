@@ -142,12 +142,30 @@ impl Config {
         return Err(format!("Could not find user '{}' to set Allowed state '{}'.", nickname, is_allowed))?;
     }
 
+    pub fn update_user(&mut self, nickname: String, new_public_id: String, new_ip: String, new_port: String) -> Result<(), Box<dyn Error>> {
+        let mut new_config_file = self.config_file.clone();
+        for user in new_config_file.shared_users.iter_mut() {
+            if user.nickname == nickname {
+                user.public_id = new_public_id;
+                user.ip = new_ip;
+                user.port = new_port;
+
+                self.write_and_set_config(&mut new_config_file)?;
+                return Ok(());
+            }
+            
+        }
+        
+        return Err(format!("Failed to find user '{}'. Could not update user.", nickname))?;
+    }
+
     fn write_and_set_config(&mut self, config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
         write_config(config_file)?;
         self.config_file = config_file.to_owned();
 
         return Ok(());
     }
+
 }
 
 fn create_config_dir() -> Result<(), std::io::Error> {
