@@ -113,12 +113,33 @@ impl Config {
         return self.first_start;
     }
 
+    pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
+        let mut new_config_file = self.config_file.clone();
+        new_config_file.shared_users.retain(|x| x.nickname != nickname);
+        self.write_and_set_config(&mut new_config_file)?;
+
+        return Ok(());
+    }
+
     pub fn set_port(&mut self, port: String) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
         new_config_file.sharing_port = port;
         self.write_and_set_config(&mut new_config_file)?;
 
         return Ok(());
+    }
+
+    pub fn set_user_is_allowed_state(&mut self, nickname: String, is_allowed: bool) -> Result<(), Box<dyn Error>> {
+        let mut new_config_file = self.config_file.clone();
+        for user in new_config_file.shared_users.iter_mut() {
+            if user.nickname == nickname {
+                user.allowed = is_allowed;
+                self.write_and_set_config(&mut new_config_file)?;
+                return Ok(());
+            }
+        }
+
+        return Err(format!("Could not find user '{}' to set Allowed state '{}'.", nickname, is_allowed))?;
     }
 
     fn write_and_set_config(&mut self, config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
@@ -234,25 +255,25 @@ fn get_blocked_file_name_chars() -> String {
 }
 
 fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<dyn Error>> {
-    // TODO
-    // Block duplicate PublicIDs?
-    //  this would allow for an easy deployment of a known/preshared key. But is that safe without setting a flag?
-    // Block IPs?
-    //  prevent accidently adding the wrong IP, but the PublicID would prevent any issue
-    //  block IP:port combos instead?
-    //  running multiple transmitic instances on one box?
-
-    // Check duplicate names
+    // Check duplicate names and public ids
     for user in shared_users {
         let mut user_count = 0;
+        let mut public_id_count = 0;
         for userj in shared_users {
-            if user.nickname == userj.nickname {
+            if user.nickname.to_lowercase() == userj.nickname.to_lowercase() {
                 user_count += 1;
+            }
+            if user.public_id == userj.public_id {
+                public_id_count += 1;
             }
         }
 
         if user_count > 1 {
             return Err(format!("Nicknames cannot be repeated. '{}' was found '{}' times.", user.nickname, user_count))?;
+        }
+
+        if public_id_count > 1 {
+            return Err(format!("PublicIDs cannot be repeated. '{}' was found '{}' times.", user.public_id, public_id_count))?;
         }
     }
 

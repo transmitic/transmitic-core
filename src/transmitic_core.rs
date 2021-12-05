@@ -63,6 +63,11 @@ impl TransmiticCore {
         return self.config.get_sharing_port();
     }
 
+    pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
+        self.config.remove_user(nickname)?;
+        return Ok(());
+    }
+
     pub fn set_my_sharing_state(&mut self, sharing_state: String) -> Result<(), Box<dyn Error>> {
         if sharing_state == "Off" {
             
@@ -77,6 +82,11 @@ impl TransmiticCore {
             return Err(format!("Invalid sharing state {}", sharing_state))?;
         }
         self.sharing_state = sharing_state;
+        return Ok(());
+    }
+
+    pub fn set_user_is_allowed_state(&mut self, nickname: String, is_allowed: bool) -> Result<(), Box<dyn Error>> {
+        self.config.set_user_is_allowed_state(nickname, is_allowed)?;
         return Ok(());
     }
 }
