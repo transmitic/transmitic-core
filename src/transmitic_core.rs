@@ -51,6 +51,10 @@ impl TransmiticCore {
         return self.config.get_public_id_string();
     }
 
+    pub fn get_my_sharing_files(&self) -> Vec<ConfigSharedFile> {
+        return self.config.get_shared_files();
+    }
+
     pub fn get_my_sharing_state(&self) -> String {
         return self.sharing_state.clone();
     }

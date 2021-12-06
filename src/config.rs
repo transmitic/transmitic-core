@@ -100,6 +100,9 @@ impl Config {
 		let public_id_string = crypto::get_base64_str_from_bytes(public_id.to_vec());
         return public_id_string;
     }
+    pub fn get_shared_files(&self) -> Vec<ConfigSharedFile> {
+        return self.config_file.shared_files.clone();
+    }
 
     pub fn get_shared_users(&self) -> Vec<SharedUser> {
         return self.config_file.shared_users.clone();
@@ -229,6 +232,7 @@ fn verify_config(config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
     verify_config_port(&config_file.sharing_port)?;
     verify_config_my_private_id(&config_file.my_private_id)?;
     verify_config_shared_users(&config_file.shared_users)?;
+    verify_config_shared_files(&config_file.shared_users, &config_file.shared_files)?;
 
     return Ok(());
 }
@@ -291,7 +295,7 @@ fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<
         }
 
         if public_id_count > 1 {
-            return Err(format!("PublicIDs cannot be repeated. '{}' was found '{}' times.", user.public_id, public_id_count))?;
+            return Err(format!("Public IDs cannot be repeated. '{}' was found '{}' times.", user.public_id, public_id_count))?;
         }
     }
 
@@ -303,7 +307,7 @@ fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<
         }
         for c in get_blocked_file_name_chars().chars() {
             if user.nickname.contains(c) {
-                return Err(format!("Nickname '{}' contains the character '{}' which is not allowed. These characters are not allowed:   {}'", user.nickname, c, get_blocked_file_name_chars()))?;
+                return Err(format!("Nickname '{}' contains the character '{}' which is not allowed. These characters are not allowed:   {}'.", user.nickname, c, get_blocked_file_name_chars()))?;
             }
         }
 
@@ -341,6 +345,23 @@ fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<
 
     }
     
+    return Ok(());
+}
+
+fn verify_config_shared_files(shared_users: &Vec<SharedUser>, shared_files: &Vec<ConfigSharedFile>) -> Result<(), Box<dyn Error>> {
+    let mut nicknames: Vec<String> = Vec::new();
+    for user in shared_users {
+        nicknames.push(user.nickname.clone());
+    }
+
+    for file in shared_files {
+        for user in &file.shared_with {
+            if !nicknames.contains(&user) {
+                return Err(format!("Cannot share file '{}' with user '{}' as that user does not exist as a shared_user.", file.path, user))?;
+            }
+        }
+    }
+
     return Ok(());
 }
 
