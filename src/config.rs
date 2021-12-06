@@ -254,6 +254,16 @@ fn sanitize_config(config_file: &mut ConfigFile) {
         user.ip = user.ip.trim().to_string();
         user.port = user.port.trim().to_string();
     }
+
+    // Trim shared files strings
+    for file in config_file.shared_files.iter_mut() {
+        file.path = file.path.trim().to_string();
+
+        for index in 0..file.shared_with.len() {
+            file.shared_with[index] = file.shared_with[index].trim().to_string();
+        }
+        file.shared_with.sort();
+    }
 }
 
 fn verify_config_port(port: &String) -> Result<(), Box<dyn Error>> {

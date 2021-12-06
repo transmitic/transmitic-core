@@ -18,6 +18,9 @@ pub struct TransmiticCore {
     sharing_state: String,
 }
 
+// TODO how to handle non existing files?
+// TODO allow empty IP, port, and PublicIDs. "placeholder" users
+
 impl TransmiticCore {
 
     pub fn new() -> Result<TransmiticCore, Box<dyn Error>> {
