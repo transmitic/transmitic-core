@@ -62,6 +62,30 @@ impl Config {
         return Ok(Config { first_start, config_file, local_key_pair, local_private_key_bytes });
     }
 
+    pub fn add_files(&mut self, files: Vec<String>) -> Result<(), Box<dyn Error>> {
+        let mut new_config_file = self.config_file.clone();
+        let mut existing_paths = Vec::new();
+        for file in new_config_file.shared_files.iter() {
+            existing_paths.push(file.path.clone());
+        }
+ 
+        for file in files {
+            // File already shared, don't readd it
+            if existing_paths.contains(&file) {
+                continue;
+            }
+
+            let shared_file = ConfigSharedFile {
+                path: file,
+                shared_with: Vec::new(),
+            };
+            new_config_file.shared_files.push(shared_file);
+        }
+        self.write_and_set_config(&mut new_config_file)?;
+
+        return Ok(());
+    }
+
     pub fn add_new_user(&mut self, new_nickname: String, new_public_id: String, new_ip: String, new_port: String) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
         let shared_user = SharedUser {
@@ -114,6 +138,14 @@ impl Config {
 
     pub fn is_first_start(&self) -> bool {
         return self.first_start;
+    }
+
+    pub fn remove_file_from_sharing(&mut self, file_path: String) -> Result<(), Box<dyn Error>> {
+        let mut new_config_file = self.config_file.clone();
+        new_config_file.shared_files.retain(|x| x.path != file_path);
+        self.write_and_set_config(&mut new_config_file)?;
+
+        return Ok(());
     }
 
     pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
@@ -256,8 +288,16 @@ fn sanitize_config(config_file: &mut ConfigFile) {
     }
 
     // Trim shared files strings
+    // remove file:// prefix
+    // convert slashes
     for file in config_file.shared_files.iter_mut() {
         file.path = file.path.trim().to_string();
+
+        if file.path.starts_with("file://") {
+            file.path = file.path[7..].to_string();
+        }
+
+        file.path = file.path.replace("/", "\\");
 
         for index in 0..file.shared_with.len() {
             file.shared_with[index] = file.shared_with[index].trim().to_string();

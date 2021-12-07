@@ -34,6 +34,11 @@ impl TransmiticCore {
         });
     }
 
+    pub fn add_files(&mut self, files: Vec<String>) -> Result<(), Box<dyn Error>> {
+        self.config.add_files(files)?;
+        return Ok(());
+    }
+
     pub fn add_new_user(&mut self, new_nickname: String, new_public_id: String, new_ip: String, new_port: String) -> Result<(), Box<dyn Error>> {
         self.config.add_new_user(new_nickname, new_public_id, new_ip, new_port)?;
         return Ok(());
@@ -68,6 +73,11 @@ impl TransmiticCore {
 
     pub fn get_sharing_port(&self) -> String {
         return self.config.get_sharing_port();
+    }
+
+    pub fn remove_file_from_sharing(&mut self, file_path: String) -> Result<(), Box<dyn Error>> {
+        self.config.remove_file_from_sharing(file_path)?;
+        return Ok(());
     }
 
     pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
