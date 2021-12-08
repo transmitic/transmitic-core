@@ -8,6 +8,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 extern crate base64;
+use aes_gcm::aead::generic_array::typenum::PartialDiv;
 use aes_gcm::aead::generic_array::typenum::private::IsNotEqualPrivate;
 use ring::signature;
 use ring::signature::KeyPair;
@@ -68,8 +69,15 @@ impl Config {
         for file in new_config_file.shared_files.iter() {
             existing_paths.push(file.path.clone());
         }
- 
-        for file in files {
+        
+        //println!("{:?}", existing_paths);
+        for mut file in files {
+            println!("{}", file);
+            if file.starts_with("file://") {
+                file = file[7..].to_string();
+            }
+            file = file.replace("/", "\\");
+            println!("{}", file);
             // File already shared, don't readd it
             if existing_paths.contains(&file) {
                 continue;
@@ -450,6 +458,21 @@ fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<
 }
 
 fn verify_config_shared_files(shared_users: &Vec<SharedUser>, shared_files: &Vec<ConfigSharedFile>) -> Result<(), Box<dyn Error>> {
+    // Check for duplicate files
+    for file in shared_files {
+        let mut file_count = 0;
+        for filej in shared_files {
+            if file.path == filej.path {
+                file_count += 1;
+            }
+        }
+
+        if file_count > 1 {
+            return Err(format!("File '{}' has been shared '{}' times. It can only be shared once.", file.path, file_count))?;
+        }
+    }
+
+    // Validate users
     let mut nicknames: Vec<String> = Vec::new();
     for user in shared_users {
         nicknames.push(user.nickname.clone());
