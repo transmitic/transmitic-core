@@ -44,6 +44,11 @@ impl TransmiticCore {
         return Ok(());
     }
 
+    pub fn add_user_to_shared(&mut self, nickname: String, file_path: String) -> Result<(), Box<dyn Error>> {
+        self.config.add_user_to_shared(nickname, file_path)?;
+        return Ok(());
+    }
+
     pub fn create_new_id(&mut self) -> Result<(), Box<dyn Error>> {
         self.config.create_new_id()?;
         return Ok(());

@@ -101,6 +101,35 @@ impl Config {
         return Ok(());
     }
 
+    pub fn add_user_to_shared(&mut self, nickname: String, file_path: String) -> Result<(), Box<dyn Error>> {
+        let mut new_config_file = self.config_file.clone();
+        
+        // Is user valid
+        let mut is_user_valid = false;
+        for shared in &new_config_file.shared_users {
+            if shared.nickname == nickname {
+                is_user_valid = true;
+                break;
+            }
+        }
+        if !is_user_valid {
+            return Err(format!("Could not share file '{}'. User '{}' does not exist.", file_path, nickname))?;
+        }
+
+        // Add user
+        // TODO can I enumerate without ownership issues?
+        for i in 0..new_config_file.shared_files.len() {
+            if new_config_file.shared_files[i].path == file_path {
+                if !new_config_file.shared_files[i].shared_with.contains(&nickname) {
+                    new_config_file.shared_files[i].shared_with.push(nickname);
+                    self.write_and_set_config(&mut new_config_file)?;
+                }
+                return Ok(());
+            }
+        }
+        return Err(format!("Could not find file '{}' to share with user '{}'.", file_path, nickname))?;
+    }
+
     pub fn create_new_id(&mut self) -> Result<(), Box<dyn Error>> {
         let (private_id_bytes, _) = crypto::generate_id_pair().unwrap();
         let private_id_string = base64::encode(private_id_bytes);
@@ -124,6 +153,7 @@ impl Config {
 		let public_id_string = crypto::get_base64_str_from_bytes(public_id.to_vec());
         return public_id_string;
     }
+
     pub fn get_shared_files(&self) -> Vec<ConfigSharedFile> {
         return self.config_file.shared_files.clone();
     }
@@ -149,7 +179,15 @@ impl Config {
     }
 
     pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
+        // TODO remove user from shared_files as well
         let mut new_config_file = self.config_file.clone();
+        
+        // Remove from shared files
+        for i in 0..new_config_file.shared_files.len() {
+            new_config_file.shared_files[i].shared_with.retain(|x| x != &nickname);
+        }
+
+        // Remove from shared_users
         new_config_file.shared_users.retain(|x| x.nickname != nickname);
         self.write_and_set_config(&mut new_config_file)?;
 
@@ -299,8 +337,8 @@ fn sanitize_config(config_file: &mut ConfigFile) {
 
         file.path = file.path.replace("/", "\\");
 
-        for index in 0..file.shared_with.len() {
-            file.shared_with[index] = file.shared_with[index].trim().to_string();
+        for i in 0..file.shared_with.len() {
+            file.shared_with[i] = file.shared_with[i].trim().to_string();
         }
         file.shared_with.sort();
     }
