@@ -178,8 +178,21 @@ impl Config {
         return Ok(());
     }
 
+    pub fn remove_user_from_sharing(&mut self, nickname: String, file_path: String) -> Result<(), Box<dyn Error>> {
+        let mut new_config_file = self.config_file.clone();
+
+        for i in 0..new_config_file.shared_files.len() {
+            if new_config_file.shared_files[i].path == file_path {
+                new_config_file.shared_files[i].shared_with.retain(|x| x != &nickname);
+            }
+        }
+
+        self.write_and_set_config(&mut new_config_file)?;
+
+        return Ok(());
+    }
+
     pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
-        // TODO remove user from shared_files as well
         let mut new_config_file = self.config_file.clone();
         
         // Remove from shared files

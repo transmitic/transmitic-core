@@ -85,6 +85,11 @@ impl TransmiticCore {
         return Ok(());
     }
 
+    pub fn remove_user_from_sharing(&mut self, nickname: String, file_path: String) -> Result<(), Box<dyn Error>> {
+        self.config.remove_user_from_sharing(nickname, file_path)?;
+        return Ok(());
+    }
+
     pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
         self.config.remove_user(nickname)?;
         return Ok(());
