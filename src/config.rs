@@ -10,6 +10,7 @@ use std::path::PathBuf;
 extern crate base64;
 use aes_gcm::aead::generic_array::typenum::PartialDiv;
 use aes_gcm::aead::generic_array::typenum::private::IsNotEqualPrivate;
+use aes_gcm::aes::cipher::block;
 use ring::signature;
 use ring::signature::KeyPair;
 use serde::{Deserialize, Serialize};
@@ -381,7 +382,14 @@ fn verify_config_my_private_id(my_private_id: &String) -> Result<(), Box<dyn Err
 }
 
 fn get_blocked_file_name_chars() -> String {
-    let block_chars = String::from("/\\:*?\"<>|");
+    let mut block_chars = get_blocked_file_path_chars();
+    block_chars.push('\\');
+    block_chars.push(':');
+    return block_chars;
+}
+
+fn get_blocked_file_path_chars() -> String {
+    let block_chars = String::from("/*?\"<>|");
     return block_chars;
 }
 
@@ -482,6 +490,22 @@ fn verify_config_shared_files(shared_users: &Vec<SharedUser>, shared_files: &Vec
         for user in &file.shared_with {
             if !nicknames.contains(&user) {
                 return Err(format!("Cannot share file '{}' with user '{}' as that user does not exist as a shared_user.", file.path, user))?;
+            }
+        }
+    }
+
+    // Validate file paths
+    let t = get_path_transmitic_config_dir()?;
+    let t2 = t.as_os_str();
+    let transmitic_config_dir_path = t2.to_str().ok_or(format!("Failed to convert transmitic config dir path to os str. {:?}", t2))?;
+    for file in shared_files {
+        if file.path.starts_with(transmitic_config_dir_path) {
+            return Err(format!("The Transmitic Config directory, and it's sub files, cannot be shared. '{}'", transmitic_config_dir_path))?;
+        }
+
+        for c in get_blocked_file_path_chars().chars() {
+            if file.path.contains(c) {
+                return Err(format!("Cannot share file '{}' because it contains the character '{}' which is not allowed. These characters are not allowed:   {}'.", file.path, c, get_blocked_file_path_chars()))?;
             }
         }
     }
