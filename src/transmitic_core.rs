@@ -5,7 +5,7 @@ use ring::{
 	signature::{self, KeyPair},
 };
 
-use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto};
+use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader, self}};
 
 pub struct LocalKeyData {
 	pub local_key_pair: signature::Ed25519KeyPair,
@@ -16,6 +16,7 @@ pub struct TransmiticCore {
     config: Config,
     is_first_start: bool,
     sharing_state: String,
+    outgoing_downloader: OutgoingDownloader,
 }
 
 // TODO how to handle non existing files?
@@ -27,10 +28,14 @@ impl TransmiticCore {
         let config = Config::new()?;
         let is_first_start = config.is_first_start();
 
+        let mut outgoing_downloader = OutgoingDownloader::new(config.clone())?;
+        outgoing_downloader.start_downloading();
+
         return Ok(TransmiticCore {
             config: config,
             is_first_start,
             sharing_state: "Off".to_string(),
+            outgoing_downloader,
         });
     }
 
@@ -114,6 +119,11 @@ impl TransmiticCore {
 
     pub fn set_user_is_allowed_state(&mut self, nickname: String, is_allowed: bool) -> Result<(), Box<dyn Error>> {
         self.config.set_user_is_allowed_state(nickname, is_allowed)?;
+        return Ok(());
+    }
+
+    pub fn start_my_downloading(&mut self) -> Result<(), Box<dyn Error>> {
+
         return Ok(());
     }
 

@@ -12,6 +12,7 @@ use aes_gcm::aead::generic_array::typenum::PartialDiv;
 use aes_gcm::aead::generic_array::typenum::private::IsNotEqualPrivate;
 use aes_gcm::aes::cipher::block;
 use ring::signature;
+use ring::signature::Ed25519KeyPair;
 use ring::signature::KeyPair;
 use serde::{Deserialize, Serialize};
 
@@ -42,11 +43,13 @@ struct ConfigFile {
     sharing_port: String,
 }
 
+#[derive(Clone)]
 pub struct Config {
     first_start: bool,
     config_file: ConfigFile,
-	local_key_pair: signature::Ed25519KeyPair,
+	//local_key_pair: signature::Ed25519KeyPair,
 	local_private_key_bytes: Vec<u8>,
+    path_dir_config: PathBuf,
 }
 
 impl Config {
@@ -54,14 +57,15 @@ impl Config {
         create_config_dir()?;
         let first_start = init_config()?;
         let config_file = read_config()?;
+        let path_dir_config = get_path_transmitic_config_dir()?;
 
         // Load local private key pair
         // TODO repeated in create_new_id and create new config?
         let local_private_key_bytes = crypto::get_bytes_from_base64_str(&config_file.my_private_id)?;
         let local_key_pair =
-            signature::Ed25519KeyPair::from_pkcs8(local_private_key_bytes.as_ref()).unwrap();
+            signature::Ed25519KeyPair::from_pkcs8(local_private_key_bytes.as_ref()).unwrap(); // TODO
 
-        return Ok(Config { first_start, config_file, local_key_pair, local_private_key_bytes });
+        return Ok(Config { first_start, config_file, local_private_key_bytes, path_dir_config, });
     }
 
     pub fn add_files(&mut self, files: Vec<String>) -> Result<(), Box<dyn Error>> {
@@ -139,6 +143,16 @@ impl Config {
         return Err(format!("Could not find file '{}' to share with user '{}'.", file_path, nickname))?;
     }
 
+    pub fn get_local_key_pair(&self) -> Ed25519KeyPair {
+        let local_key_pair =
+        signature::Ed25519KeyPair::from_pkcs8(self.local_private_key_bytes.as_ref()).unwrap();
+        return local_key_pair;
+    }
+
+    pub fn get_local_private_id_bytes(&self) -> Vec<u8> {
+        return self.local_private_key_bytes.clone();
+    }
+
     pub fn create_new_id(&mut self) -> Result<(), Box<dyn Error>> {
         let (private_id_bytes, _) = crypto::generate_id_pair().unwrap();
         let private_id_string = base64::encode(private_id_bytes);
@@ -149,16 +163,22 @@ impl Config {
 
         // TODO move this to write_and_set_config?
         let local_private_key_bytes = crypto::get_bytes_from_base64_str(&self.config_file.my_private_id)?;
-        let local_key_pair =
-            signature::Ed25519KeyPair::from_pkcs8(local_private_key_bytes.as_ref()).unwrap();
-        self.local_key_pair = local_key_pair;
+        // TODO
+        //let local_key_pair =
+        //    signature::Ed25519KeyPair::from_pkcs8(local_private_key_bytes.as_ref()).unwrap();
+        //self.local_key_pair = local_key_pair; // TODO
         self.local_private_key_bytes = local_private_key_bytes;
 
         return Ok(());
     }
 
+    pub fn get_path_dir_config(&self) -> PathBuf {
+        return self.path_dir_config.clone();
+    }
+
     pub fn get_public_id_string(&self) -> String {
-        let public_id = self.local_key_pair.public_key().as_ref();
+        let local_key_pair = self.get_local_key_pair();
+        let public_id = local_key_pair.public_key().as_ref();
 		let public_id_string = crypto::get_base64_str_from_bytes(public_id.to_vec());
         return public_id_string;
     }

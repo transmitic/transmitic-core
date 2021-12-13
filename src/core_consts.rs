@@ -1,3 +1,14 @@
+// TODO update ! after beta to N
+pub const TRAN_MAGIC_NUMBER: [u8; 4] = ['T' as u8, 'R' as u8, 'A' as u8, '!' as u8];
+pub const TRAN_API_MAJOR: u8 = 1;
+pub const TRAN_API_MINOR: u16 = 0;
+
+
+// CONNECTION ESTABLISH
+pub const CONN_ESTABLISH_REQUEST: u16 = 0;
+pub const CONN_ESTABLISH_ACCEPT: u16 = 1;
+pub const CONN_ESTABLISH_REJECT: u16 = 2;
+
 //TODO REORG all
 
 pub const MSG_TYPE_SIZE: usize = 1;
