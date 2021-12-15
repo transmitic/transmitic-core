@@ -274,12 +274,8 @@ impl SingleDownloader {
                 }
             }
 
-            panic!("done incoming");
+            println!("outgoing downloader connected");
 
-            let path_active_download = match self.download_queue.get(0) {
-                Some(path_active_download) => path_active_download.clone(),
-                None => todo!(),  // TODO this should never happen. log. Combine with the above isempty check?
-            };
 
             // SECURE STREAM
             // Diffie
@@ -288,12 +284,42 @@ impl SingleDownloader {
             let local_diffie_public_bytes: &[u8; 32] = local_diffie_public.as_bytes();
             let local_diffie_signature_public_bytes = self.private_key_pair.sign(local_diffie_public_bytes);
             let local_diffie_signed_public_bytes = local_diffie_signature_public_bytes.as_ref();
+            // diffie public key + diffie public key signed
+            const buffer_size: usize = 32 + 64;
+            let mut buffer = [0; buffer_size];
+            buffer[0..32].copy_from_slice(&local_diffie_public_bytes[0..32]);
+            buffer[32..buffer_size].copy_from_slice(&local_diffie_signed_public_bytes[0..64]);
+
+            match stream.write_all(&buffer) {
+                Ok(_) => {},
+                Err(e) => {
+                    println!("{} Conn diffie failed write {}", self.shared_user.nickname, e.to_string());
+                    match stream.shutdown(Shutdown::Both) {
+                        Ok(_) => {
+                            continue;
+                        },
+                        Err(e2) => {
+                            // TODO
+                            println!("{} Conn est failed shutdown. {}", self.shared_user.nickname, e2.to_string());
+                            continue;
+                        },
+                    }
+                },
+            }
+            println!("diffie sent");
+
 
             // SEND DIFFIE
 
             // get chunk
             // write chunk
             // Perform checks if should keep downloading
+
+            
+            let path_active_download = match self.download_queue.get(0) {
+                Some(path_active_download) => path_active_download.clone(),
+                None => todo!(),  // TODO this should never happen. log. Combine with the above isempty check?
+            };
 
             self.read_receiver();
 

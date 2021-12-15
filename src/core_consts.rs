@@ -5,6 +5,9 @@ pub const TRAN_API_MINOR: u16 = 0;
 
 
 // CONNECTION ESTABLISH
+// Are these really needed?
+// REQUEST is obvious on first connect
+// Anything else is just TCP shutdown
 pub const CONN_ESTABLISH_REQUEST: u16 = 0;
 pub const CONN_ESTABLISH_ACCEPT: u16 = 1;
 pub const CONN_ESTABLISH_REJECT: u16 = 2;

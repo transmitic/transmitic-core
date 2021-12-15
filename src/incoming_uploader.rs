@@ -1,10 +1,12 @@
 use core::time;
-use std::net::{TcpListener, TcpStream};
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream, Shutdown};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
-use crate::config::Config;
+use crate::config::{Config, SharedUser};
+use crate::core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT};
 
 #[derive(Clone)]
 pub enum SharingState {
@@ -17,9 +19,7 @@ enum MessageUploadManager {
 
 }
 
-enum MessageSingleUploader {
 
-}
 
 pub struct IncomingUploader {
     sender: Sender<MessageUploadManager>,
@@ -28,14 +28,14 @@ pub struct IncomingUploader {
 impl IncomingUploader {
 
     pub fn new(config: Config) -> IncomingUploader {
-
+        println!("Starting incoming uploader");
         let (sx, rx): (
             Sender<MessageUploadManager>,
             Receiver<MessageUploadManager>,
         ) = mpsc::channel();
 
         thread::spawn(move || {
-            let mut uploader_manager = UploaderManager::new(rx, config, SharingState::Off);
+            let mut uploader_manager = UploaderManager::new(rx, config, SharingState::Local);
             uploader_manager.run();
         });
 
@@ -61,6 +61,7 @@ impl UploaderManager {
 
     pub fn new(receiver: Receiver<MessageUploadManager>, config: Config, sharing_state: SharingState) -> UploaderManager {
 
+        println!("starting uploader manager");
         let single_uploaders = Vec::new();
 
         return UploaderManager {
@@ -138,6 +139,9 @@ impl UploaderManager {
 
 }
 
+enum MessageSingleUploader {
+
+}
 
 struct SingleUploader {
     receiver: Receiver<MessageSingleUploader>,
@@ -160,6 +164,111 @@ impl SingleUploader {
     }
 
     pub fn run(&mut self) {
+        let client_connecting_addr = match self.stream.peer_addr() {
+            Ok(client_connecting_addr) => client_connecting_addr,
+            Err(e) => {
+                // TODO log e
+                self.shutdown();
+                return;
+            },
+        };
+
+        let client_connecting_ip = client_connecting_addr.ip().to_string();
+
+        // Find valid SharedUser
+        let mut shared_user: Option<SharedUser> = None;
+        for user in self.config.get_shared_users() {
+            if user.ip == client_connecting_ip {
+                shared_user = Some(user);
+                break;
+            }
+        }
+        let shared_user = match shared_user {
+            Some(shared_user ) => shared_user,
+            None => {
+                // TODO log unknown IP
+                self.shutdown();
+                return;
+            },
+        };
+
+        if !shared_user.allowed {
+            // TODO log
+            self.shutdown();
+            return;
+        }
+
+        // Get remote TRAN data
+        let mut buffer: [u8; 9] = [0; 4 + 1 + 2 + 2];
+        // TODO set read timeout
+        match self.stream.read_exact(&mut buffer) {
+            Ok(_) => {},
+            Err(e) => {
+                println!("{} Conn est resp failed read. {}", shared_user.nickname, e.to_string());
+                self.shutdown();
+                return;
+            },
+        }
+
+        if buffer[0..4] != TRAN_MAGIC_NUMBER {
+            println!("{} TRAN MAGIC NUMBER mismatch. {:?}", shared_user.nickname, &buffer[0..4]);
+            // TODO log
+            self.shutdown();
+            return;
+        }
+
+        if buffer[4] != TRAN_API_MAJOR {
+            // TODO log
+            println!("{} TRAN API MAJOR mismatch. {}", shared_user.nickname, &buffer[4]);
+            self.shutdown();
+            return;
+        }
+
+        // Send TRAN data
+        let mut buffer: [u8; 9] = [0; 4 + 1 + 2 + 2];
+        buffer[0..4].copy_from_slice(&TRAN_MAGIC_NUMBER);
+        buffer[4] = TRAN_API_MAJOR;
+        buffer[5..7].copy_from_slice(&TRAN_API_MINOR.to_be_bytes());
+        buffer[7..9].copy_from_slice(&CONN_ESTABLISH_ACCEPT.to_be_bytes());
+
+        match self.stream.write_all(&buffer) {
+            Ok(_) => {},
+            Err(e) => {
+                println!("{} Conn est failed write {}", shared_user.nickname, e.to_string());
+                self.shutdown();
+                return;
+            },
+        }
         
+        println!("incoming downloader connected");
+
+        
+
+
+
+
+    }
+
+    fn read_receiver(&mut self) {
+        match self.receiver.try_recv() {
+            Ok(value) => match value {
+
+            }
+            Err(e) => match e {
+                mpsc::TryRecvError::Empty => return,
+                mpsc::TryRecvError::Disconnected => return,  // TODO log. When would this happen?
+            }
+        }
+    }
+
+    fn shutdown(&mut self) {
+        match self.stream.shutdown(Shutdown::Both) {
+            Ok(_) => {},
+            Err(e) => {
+                // TODO log e
+            },
+        }
+
+        // TODO send id to AppAgg
     }
 }
