@@ -5,8 +5,11 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
+use serde::__private::de::TagContentOtherField;
+
 use crate::config::{Config, SharedUser};
 use crate::core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT};
+use crate::transmitic_stream::TransmiticStream;
 
 #[derive(Clone)]
 pub enum SharingState {
@@ -113,8 +116,8 @@ impl UploaderManager {
                         self.single_uploaders.push(sx);
                         let single_config = self.config.clone();
                         thread::spawn(move || {
-                            let mut single_uploader = SingleUploader::new(rx, single_config, stream);
-                            single_uploader.run();
+                            let mut single_uploader = SingleUploader::new(rx, single_config);
+                            single_uploader.run(stream);
                         });
 
                     },
@@ -146,29 +149,27 @@ enum MessageSingleUploader {
 struct SingleUploader {
     receiver: Receiver<MessageSingleUploader>,
     config: Config,
-    stream: TcpStream,
     nickname: String,
 }
 
 impl SingleUploader {
 
-    pub fn new(receiver: Receiver<MessageSingleUploader>, config: Config, stream: TcpStream) -> SingleUploader {
+    pub fn new(receiver: Receiver<MessageSingleUploader>, config: Config) -> SingleUploader {
 
         let nickname =  String::new();
         return SingleUploader {
             receiver,
             config,
-            stream,
             nickname,
         }
     }
 
-    pub fn run(&mut self) {
-        let client_connecting_addr = match self.stream.peer_addr() {
+    pub fn run(&mut self, stream: TcpStream) {
+        let client_connecting_addr = match stream.peer_addr() {
             Ok(client_connecting_addr) => client_connecting_addr,
             Err(e) => {
                 // TODO log e
-                self.shutdown();
+                self.shutdown(stream);
                 return;
             },
         };
@@ -187,74 +188,22 @@ impl SingleUploader {
             Some(shared_user ) => shared_user,
             None => {
                 // TODO log unknown IP
-                self.shutdown();
+                self.shutdown(stream);
                 return;
             },
         };
 
         if !shared_user.allowed {
             // TODO log
-            self.shutdown();
+            self.shutdown(stream);
             return;
         }
 
-        // Get remote TRAN data
-        let mut buffer: [u8; 9] = [0; 4 + 1 + 2 + 2];
-        // TODO set read timeout
-        match self.stream.read_exact(&mut buffer) {
-            Ok(_) => {},
-            Err(e) => {
-                println!("{} Conn est resp failed read. {}", shared_user.nickname, e.to_string());
-                self.shutdown();
-                return;
-            },
-        }
+        let mut t_stream = TransmiticStream::new(stream, shared_user.clone(), self.config.get_local_private_id_bytes());
+        t_stream.wait_for_incoming().unwrap();
+        panic!("incoming downloader connected");
 
-        if buffer[0..4] != TRAN_MAGIC_NUMBER {
-            println!("{} TRAN MAGIC NUMBER mismatch. {:?}", shared_user.nickname, &buffer[0..4]);
-            // TODO log
-            self.shutdown();
-            return;
-        }
-
-        if buffer[4] != TRAN_API_MAJOR {
-            // TODO log
-            println!("{} TRAN API MAJOR mismatch. {}", shared_user.nickname, &buffer[4]);
-            self.shutdown();
-            return;
-        }
-
-        // Send TRAN data
-        let mut buffer: [u8; 9] = [0; 4 + 1 + 2 + 2];
-        buffer[0..4].copy_from_slice(&TRAN_MAGIC_NUMBER);
-        buffer[4] = TRAN_API_MAJOR;
-        buffer[5..7].copy_from_slice(&TRAN_API_MINOR.to_be_bytes());
-        buffer[7..9].copy_from_slice(&CONN_ESTABLISH_ACCEPT.to_be_bytes());
-
-        match self.stream.write_all(&buffer) {
-            Ok(_) => {},
-            Err(e) => {
-                println!("{} Conn est failed write {}", shared_user.nickname, e.to_string());
-                self.shutdown();
-                return;
-            },
-        }
-        
-        println!("incoming downloader connected");
-
-        // SECURE STREAM
-        // Read remote diffie
-        // diffie public key + diffie public key signed
-        const buffer_size: usize = 32 + 64;
-        let mut buffer = [0; buffer_size];
-        
-
-
-        // accept remote diffie
-        // send local diffie
-        // generate AES key
-        // -SECURED
-
+ 
 
 
 
@@ -272,8 +221,8 @@ impl SingleUploader {
         }
     }
 
-    fn shutdown(&mut self) {
-        match self.stream.shutdown(Shutdown::Both) {
+    fn shutdown(&mut self, stream: TcpStream) {
+        match stream.shutdown(Shutdown::Both) {
             Ok(_) => {},
             Err(e) => {
                 // TODO log e

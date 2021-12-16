@@ -168,8 +168,9 @@ impl SingleDownloader {
                 }
             };
 
-            let t_stream = TransmiticStream::new(stream, self.shared_user.clone(), self.private_id_bytes.clone());
-
+            let mut t_stream = TransmiticStream::new(stream, self.shared_user.clone(), self.private_id_bytes.clone());
+            t_stream.connect().unwrap();
+            panic!("t stream outgoing complete");
 
             // read remote diffie
             // accept remote diffie
