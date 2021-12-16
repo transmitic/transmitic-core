@@ -16,7 +16,7 @@ use ring::signature::Ed25519KeyPair;
 use ring::signature::KeyPair;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-use crate::{config::{Config, SharedUser}, core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT, CONN_ESTABLISH_REJECT}};
+use crate::{config::{Config, SharedUser}, core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT, CONN_ESTABLISH_REJECT}, transmitic_stream::TransmiticStream};
 
 pub struct OutgoingDownloader {
     config: Config,
@@ -96,6 +96,7 @@ enum MessageSingleDownloader {
 struct SingleDownloader {
     receiver: Receiver<MessageSingleDownloader>,
     private_key_pair: signature::Ed25519KeyPair,
+    private_id_bytes: Vec<u8>,
     shared_user: SharedUser,
     path_queue_file: PathBuf,
     download_queue: VecDeque<String>,
@@ -119,6 +120,7 @@ impl SingleDownloader {
         return SingleDownloader {
             receiver,
             private_key_pair,
+            private_id_bytes,
             shared_user,
             path_queue_file,
             download_queue,
@@ -165,151 +167,14 @@ impl SingleDownloader {
                     continue;
                 }
             };
-            // DO attempt key exchange first, then magic number?
-            // Establish Transmitic Connection
-            // Send TRAN data
-            let mut buffer: [u8; 9] = [0; 4 + 1 + 2 + 2];
-            buffer[0..4].copy_from_slice(&TRAN_MAGIC_NUMBER);
-            buffer[4] = TRAN_API_MAJOR;
-            buffer[5..7].copy_from_slice(&TRAN_API_MINOR.to_be_bytes());
-            buffer[7..9].copy_from_slice(&CONN_ESTABLISH_REQUEST.to_be_bytes());  // TODO is the request even needed? obviously it's a request to establish
-            
-            match stream.write_all(&buffer) {
-                Ok(_) => {},
-                Err(e) => {
-                    println!("{} Conn est failed write {}", self.shared_user.nickname, e.to_string());
-                    match stream.shutdown(Shutdown::Both) {
-                        Ok(_) => {
-                            continue;
-                        },
-                        Err(e2) => {
-                            // TODO
-                            println!("{} Conn est failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                            continue;
-                        },
-                    }
-                },
-            }
 
-            // Get remote TRAN data
-            let mut buffer: [u8; 9] = [0; 4 + 1 + 2 + 2];
-            // TODO set read timeout
-            match stream.read_exact(&mut buffer) {
-                Ok(_) => {},
-                Err(e) => {
-                    println!("{} Conn est resp failed read. {}", self.shared_user.nickname, e.to_string());
-                    match stream.shutdown(Shutdown::Both) {
-                        Ok(_) => {
-                            continue;
-                        },
-                        Err(e2) => {
-                            // TODO
-                            println!("{} Conn est resp failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                            continue;
-                        },
-                    }
-                },
-            }
-
-            if buffer[0..4] != TRAN_MAGIC_NUMBER {
-                println!("{} TRAN MAGIC NUMBER mismatch. {:?}", self.shared_user.nickname, &buffer[0..4]);
-                // TODO log
-                match stream.shutdown(Shutdown::Both) {
-                    Ok(_) => {
-                        continue;
-                    },
-                    Err(e2) => {
-                        // TODO
-                        println!("{} TRAN MAGIC NUMBER mismatch failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                        continue;
-                    },
-                }
-            }
-
-            if buffer[4] != TRAN_API_MAJOR {
-                // TODO log
-                println!("{} TRAN API MAJOR mismatch. {}", self.shared_user.nickname, &buffer[4]);
-                match stream.shutdown(Shutdown::Both) {
-                    Ok(_) => {
-                        continue;
-                    },
-                    Err(e2) => {
-                        // TODO
-                        println!("{} TRAN API MAJOR mismatch failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                        continue;
-                    },
-                }
-            }
-
-            let action: u16 = u16::from_be_bytes(buffer[7..9].try_into().unwrap());
-
-            if action == CONN_ESTABLISH_ACCEPT {
-                // Do nothing
-            }
-            else if action == CONN_ESTABLISH_REJECT {
-                println!("{} Conn est resp REJECT.", self.shared_user.nickname);
-                match stream.shutdown(Shutdown::Both) {
-                    Ok(_) => {
-                        continue;
-                    },
-                    Err(e2) => {
-                        // TODO
-                        println!("{} Conn est resp REJECT failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                        continue;
-                    },
-                }
-            }
-            else {
-                // Unsupported
-                println!("{} Conn est resp UNSUPPORTED '{}'", self.shared_user.nickname, action);
-                match stream.shutdown(Shutdown::Both) {
-                    Ok(_) => {
-                        continue;
-                    },
-                    Err(e2) => {
-                        // TODO
-                        println!("{} Conn est resp UNSUPPORTED failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                        continue;
-                    },
-                }
-            }
-
-            println!("outgoing downloader connected");
+            let t_stream = TransmiticStream::new(stream, self.shared_user.clone(), self.private_id_bytes.clone());
 
 
-            // SECURE STREAM
-            // Diffie
-            let local_diffie_secret = EphemeralSecret::new(OsRng);
-            let local_diffie_public = PublicKey::from(&local_diffie_secret);
-            let local_diffie_public_bytes: &[u8; 32] = local_diffie_public.as_bytes();
-            let local_diffie_signature_public_bytes = self.private_key_pair.sign(local_diffie_public_bytes);
-            let local_diffie_signed_public_bytes = local_diffie_signature_public_bytes.as_ref();
-            // diffie public key + diffie public key signed
-            const buffer_size: usize = 32 + 64;
-            let mut buffer = [0; buffer_size];
-            buffer[0..32].copy_from_slice(&local_diffie_public_bytes[0..32]);
-            buffer[32..buffer_size].copy_from_slice(&local_diffie_signed_public_bytes[0..64]);
-
-            match stream.write_all(&buffer) {
-                Ok(_) => {},
-                Err(e) => {
-                    println!("{} Conn diffie failed write {}", self.shared_user.nickname, e.to_string());
-                    match stream.shutdown(Shutdown::Both) {
-                        Ok(_) => {
-                            continue;
-                        },
-                        Err(e2) => {
-                            // TODO
-                            println!("{} Conn est failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                            continue;
-                        },
-                    }
-                },
-            }
-            println!("diffie sent");
-
-
-            // SEND DIFFIE
+            // read remote diffie
+            // accept remote diffie
+            // generate AES key
+            // -SECURED
 
             // get chunk
             // write chunk

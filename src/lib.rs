@@ -7,3 +7,4 @@ pub mod secure_stream;
 pub mod shared_file;
 pub mod transmitic_core;
 pub mod utils;
+pub mod transmitic_stream;

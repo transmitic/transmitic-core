@@ -242,7 +242,18 @@ impl SingleUploader {
         
         println!("incoming downloader connected");
 
+        // SECURE STREAM
+        // Read remote diffie
+        // diffie public key + diffie public key signed
+        const buffer_size: usize = 32 + 64;
+        let mut buffer = [0; buffer_size];
         
+
+
+        // accept remote diffie
+        // send local diffie
+        // generate AES key
+        // -SECURED
 
 
 
