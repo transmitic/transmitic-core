@@ -1,4 +1,5 @@
 use core::time;
+use std::error::Error;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, Shutdown};
 use std::sync::mpsc;
@@ -9,6 +10,7 @@ use serde::__private::de::TagContentOtherField;
 
 use crate::config::{Config, SharedUser};
 use crate::core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT};
+use crate::encrypted_stream::EncryptedStream;
 use crate::transmitic_stream::TransmiticStream;
 
 #[derive(Clone)]
@@ -199,14 +201,36 @@ impl SingleUploader {
             return;
         }
 
-        let mut t_stream = TransmiticStream::new(stream, shared_user.clone(), self.config.get_local_private_id_bytes());
-        t_stream.wait_for_incoming().unwrap();
-        panic!("incoming downloader connected");
-
+        let mut transmitic_stream = TransmiticStream::new(stream, shared_user.clone(), self.config.get_local_private_id_bytes());
+        let mut encrypted_stream = transmitic_stream.wait_for_incoming().unwrap();  // TODO remove unwrap
+        println!("enc stream created");
  
+        loop {
+            match self.run_loop(&mut encrypted_stream) {
+                Ok(_) => {},
+                Err(e) => {
+                    println!("{}", e.to_string());
+                    break;
+                },
+            }
+        }
+
+        // TODO shutdown encrypted stream
 
 
+    }
 
+    fn run_loop(&mut self, encrypted_stream: &mut EncryptedStream) -> Result<(), Box<dyn Error>> {
+
+        encrypted_stream.read()?;
+
+        let message = encrypted_stream.get_message()?;
+        println!("{:?}", message);
+        println!("{:?}", encrypted_stream.buffer);
+
+        panic!("LOOP FIN");
+
+        return Ok(());
     }
 
     fn read_receiver(&mut self) {
@@ -221,6 +245,7 @@ impl SingleUploader {
         }
     }
 
+    // TODO doesn't support EncryptedStream
     fn shutdown(&mut self, stream: TcpStream) {
         match stream.shutdown(Shutdown::Both) {
             Ok(_) => {},

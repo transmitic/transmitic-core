@@ -168,9 +168,20 @@ impl SingleDownloader {
                 }
             };
 
-            let mut t_stream = TransmiticStream::new(stream, self.shared_user.clone(), self.private_id_bytes.clone());
-            t_stream.connect().unwrap();
-            panic!("t stream outgoing complete");
+            let mut transmitic_stream = TransmiticStream::new(stream, self.shared_user.clone(), self.private_id_bytes.clone());
+            let mut encrypted_stream = transmitic_stream.connect().unwrap(); // TODO remove unwrap
+            
+            let message: u16 = 8956;
+            let mut payload: Vec<u8> = Vec::new();
+            payload.push(240);
+            payload.push(0);
+            payload.push(20);
+            payload.push(15);
+            payload.push(15);
+            encrypted_stream.write(message, &payload).unwrap();
+
+            panic!("SEND COMPLETE ");
+
 
             // read remote diffie
             // accept remote diffie
