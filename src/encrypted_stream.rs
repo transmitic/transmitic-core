@@ -9,6 +9,7 @@ use aes_gcm::Aes256Gcm;
 use crate::core_consts::{TOTAL_BUFFER_SIZE, PAYLOAD_SIZE_LEN, PAYLOAD_OFFSET, TOTAL_CRYPTO_BUFFER_SIZE, MSG_TYPE_SIZE};
 
 // TODO Read and write only payload size, not entire buffer
+//  and encrypt only needed
 //  Zero out buffer
 
 pub struct EncryptedStream {
@@ -100,6 +101,12 @@ impl EncryptedStream {
     pub fn get_message(&self) -> Result<u16, Box<dyn Error>> {
         let message_array = self.buffer[0..2].try_into()?;
         return Ok(u16::from_be_bytes(message_array));
+    }
+
+    pub fn get_payload(&self) -> &[u8] {
+        let payload_size_bytes: u32 = u32::from_be_bytes(self.buffer[MSG_TYPE_SIZE..PAYLOAD_SIZE_LEN + MSG_TYPE_SIZE].try_into().unwrap());
+        let payload_size = payload_size_bytes as usize;
+        return &self.buffer[PAYLOAD_OFFSET..PAYLOAD_OFFSET + payload_size];
     }
 
     fn set_buffer(&mut self, message: u16, payload: &Vec<u8>) {

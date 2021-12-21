@@ -8,9 +8,10 @@ use std::thread;
 
 use serde::__private::de::TagContentOtherField;
 
-use crate::config::{Config, SharedUser};
-use crate::core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT};
+use crate::config::{Config, SharedUser, get_everything_file};
+use crate::core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT, MSG_FILE_LIST, MSG_FILE_SELECTION_CONTINUE, MAX_DATA_SIZE, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE};
 use crate::encrypted_stream::EncryptedStream;
+use crate::shared_file::SharedFile;
 use crate::transmitic_stream::TransmiticStream;
 
 #[derive(Clone)]
@@ -204,9 +205,26 @@ impl SingleUploader {
         let mut transmitic_stream = TransmiticStream::new(stream, shared_user.clone(), self.config.get_local_private_id_bytes());
         let mut encrypted_stream = transmitic_stream.wait_for_incoming().unwrap();  // TODO remove unwrap
         println!("enc stream created");
+
+        let everything_file = match get_everything_file(&self.config, &shared_user.nickname) {
+            Ok(everything_file) => everything_file,
+            Err(e) => {
+                println!("{:?}", e);
+                return;
+            },
+        };
+
+        let everything_file_json: String = match serde_json::to_string(&everything_file) {
+            Ok(everything_file_json) => everything_file_json,
+            Err(e) => {
+                println!("{:?}", e);
+                return;
+            },
+        };
+        let everything_file_json_bytes = everything_file_json.as_bytes().to_vec();
  
         loop {
-            match self.run_loop(&mut encrypted_stream) {
+            match self.run_loop(&mut encrypted_stream, &everything_file, &everything_file_json_bytes) {
                 Ok(_) => {},
                 Err(e) => {
                     println!("{}", e.to_string());
@@ -220,13 +238,48 @@ impl SingleUploader {
 
     }
 
-    fn run_loop(&mut self, encrypted_stream: &mut EncryptedStream) -> Result<(), Box<dyn Error>> {
+    fn run_loop(&mut self, encrypted_stream: &mut EncryptedStream, everything_file: &SharedFile, everything_file_json_bytes: &Vec<u8>) -> Result<(), Box<dyn Error>> {
 
         encrypted_stream.read()?;
 
-        let message = encrypted_stream.get_message()?;
-        println!("{:?}", message);
+        let client_message = encrypted_stream.get_message()?;
+        println!("{:?}", client_message);
         println!("{:?}", encrypted_stream.buffer);
+
+        if client_message == MSG_FILE_LIST {
+            println!("{:?}", everything_file_json_bytes);
+            let mut remaining_bytes = everything_file_json_bytes.len();
+            let mut sent_bytes = 0;
+            let mut msg;
+            let mut payload;
+			loop {
+				if remaining_bytes <= MAX_DATA_SIZE {
+					payload = Vec::from(&everything_file_json_bytes[sent_bytes..remaining_bytes+sent_bytes]);
+                    msg = MSG_FILE_LIST_FINAL;
+				} else {
+					payload = Vec::from(&everything_file_json_bytes[sent_bytes..MAX_DATA_SIZE+sent_bytes]);
+                    msg = MSG_FILE_LIST_PIECE;
+				}
+
+                match encrypted_stream.write(msg, &payload) {
+                    Ok(_) => {},
+                    Err(e) => {
+                        println!("{:?}", e);
+                        return Err(e);
+                    },
+                }
+
+                if msg == MSG_FILE_LIST_FINAL {
+                    return Ok(());
+                }
+				
+				sent_bytes += MAX_DATA_SIZE;
+				remaining_bytes -= MAX_DATA_SIZE;
+			}
+        }
+        else if client_message == MSG_FILE_SELECTION_CONTINUE {
+            
+        }
 
         panic!("LOOP FIN");
 

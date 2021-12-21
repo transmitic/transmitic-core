@@ -6,6 +6,8 @@ use std::{
     path::{Path, PathBuf}, collections::{VecDeque, HashMap}, ops::Index, net::{SocketAddr, TcpStream, Shutdown}, io::{Write, Read}, convert::TryInto,
 };
 
+use crate::shared_file::{SharedFile, remove_invalid_files, print_shared_files};
+
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
@@ -16,7 +18,7 @@ use ring::signature::Ed25519KeyPair;
 use ring::signature::KeyPair;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-use crate::{config::{Config, SharedUser}, core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT, CONN_ESTABLISH_REJECT}, transmitic_stream::TransmiticStream};
+use crate::{config::{Config, SharedUser}, core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT, CONN_ESTABLISH_REJECT, MSG_FILE_LIST, MSG_FILE_LIST_FINAL}, transmitic_stream::TransmiticStream};
 
 pub struct OutgoingDownloader {
     config: Config,
@@ -171,26 +173,32 @@ impl SingleDownloader {
             let mut transmitic_stream = TransmiticStream::new(stream, self.shared_user.clone(), self.private_id_bytes.clone());
             let mut encrypted_stream = transmitic_stream.connect().unwrap(); // TODO remove unwrap
             
-            let message: u16 = 8956;
-            let mut payload: Vec<u8> = Vec::new();
-            payload.push(240);
-            payload.push(0);
-            payload.push(20);
-            payload.push(15);
-            payload.push(15);
+            // request file list
+            let message: u16 = MSG_FILE_LIST;
+            let payload: Vec<u8> = Vec::new();
             encrypted_stream.write(message, &payload).unwrap();
+
+            let mut json_bytes: Vec<u8> = Vec::new();
+            loop {
+                encrypted_stream.read().unwrap();
+                let client_message = encrypted_stream.get_message().unwrap();
+                json_bytes.extend_from_slice(encrypted_stream.get_payload());
+
+                if client_message == MSG_FILE_LIST_FINAL {
+                    break;
+                }
+            }
+
+            println!("{:?}", json_bytes);
+            let files_str = std::str::from_utf8(&json_bytes).unwrap();
+            let mut everything_file: SharedFile = serde_json::from_str(&files_str).unwrap();
+
+            remove_invalid_files(&mut everything_file);
+
+            print_shared_files(&everything_file, &"".to_string());
 
             panic!("SEND COMPLETE ");
 
-
-            // read remote diffie
-            // accept remote diffie
-            // generate AES key
-            // -SECURED
-
-            // get chunk
-            // write chunk
-            // Perform checks if should keep downloading
 
             
             let path_active_download = match self.download_queue.get(0) {

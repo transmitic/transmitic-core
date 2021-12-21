@@ -2,6 +2,7 @@ use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::fs::metadata;
 use std::io;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -17,6 +18,7 @@ use ring::signature::KeyPair;
 use serde::{Deserialize, Serialize};
 
 use crate::crypto;
+use crate::shared_file::SharedFile;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConfigSharedFile {
@@ -413,6 +415,15 @@ fn get_blocked_file_path_chars() -> String {
     return block_chars;
 }
 
+pub fn file_contains_only_valid_chars(shared_file: &SharedFile) -> bool {
+    for c in get_blocked_file_path_chars().chars() {
+        if shared_file.path.contains(c) {
+            return false;
+        }
+    }
+    return true;
+}
+
 fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<dyn Error>> {
     // Check duplicate names and public ids
     for user in shared_users {
@@ -560,4 +571,82 @@ fn read_config() -> Result<ConfigFile, Box<dyn Error>> {
 
     return Ok(config_file);
 
+}
+
+// TODO move into config?
+pub fn get_everything_file(config: &Config, nickname: &String) -> Result<SharedFile, Box<dyn Error>> {
+    // The "root" everything directory
+    let mut everything_file: SharedFile = SharedFile {
+        path: "everything/".to_string(),
+        is_directory: true,
+        files: Vec::new(),
+        file_size: 0,
+    };
+
+    // Get SharedFiles
+    for file in &config.get_shared_files() {
+        if file.shared_with.contains(&nickname) == false {
+            continue;
+        }
+
+        let path: String = file.path.clone();
+        let is_directory: bool = match metadata(&path) {
+            Ok(data) => data.is_dir(),
+            Err(e) => return Err(Box::new(e)),
+        };
+
+        let mut file_size: u64 = 0; // directory size calculated by all files
+        if is_directory == false {
+            file_size = metadata(&path).unwrap().len();
+        }
+
+        let mut shared_file: SharedFile = SharedFile {
+            path,
+            is_directory,
+            files: Vec::new(),
+            file_size,
+        };
+        let config_dir = &config.get_path_dir_config().to_str().unwrap().to_string();
+        process_shared_file(&mut shared_file, config_dir);
+        everything_file.file_size += shared_file.file_size;
+        everything_file.files.push(shared_file);
+    }
+
+    return Ok(everything_file);
+}
+
+pub fn process_shared_file(shared_file: &mut SharedFile, config_dir: &String) {
+    if shared_file.is_directory == false {
+        return;
+    }
+
+    if shared_file.is_directory {
+        for file in fs::read_dir(&shared_file.path).unwrap() {
+            let file = file.unwrap();
+            let path = file.path();
+            let path_string = String::from(path.to_str().unwrap());
+
+            if path_string.contains(config_dir) {
+                continue;
+            }
+
+            let is_directory = path.is_dir();
+
+            let mut file_size: u64 = 0; // directory size calculated by all files
+            if is_directory == false {
+                file_size = metadata(&path_string).unwrap().len();
+            }
+            let mut new_shared_file = SharedFile {
+                path: path_string,
+                is_directory,
+                files: Vec::new(),
+                file_size,
+            };
+            if is_directory {
+                process_shared_file(&mut new_shared_file, config_dir);
+            }
+            shared_file.file_size += new_shared_file.file_size;
+            shared_file.files.push(new_shared_file);
+        }
+    }
 }
