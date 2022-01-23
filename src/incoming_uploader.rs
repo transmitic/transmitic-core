@@ -1,6 +1,7 @@
 use core::time;
 use std::error::Error;
-use std::io::{Read, Write};
+use std::fs::OpenOptions;
+use std::io::{Read, Write, SeekFrom, Seek};
 use std::net::{TcpListener, TcpStream, Shutdown};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -9,10 +10,11 @@ use std::thread;
 use serde::__private::de::TagContentOtherField;
 
 use crate::config::{Config, SharedUser, get_everything_file};
-use crate::core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT, MSG_FILE_LIST, MSG_FILE_SELECTION_CONTINUE, MAX_DATA_SIZE, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE};
+use crate::core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT, MSG_FILE_LIST, MSG_FILE_SELECTION_CONTINUE, MAX_DATA_SIZE, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE, MSG_FILE_INVALID_FILE, MSG_CANNOT_SELECT_DIRECTORY, MSG_FILE_CHUNK, MSG_FILE_FINISHED};
 use crate::encrypted_stream::EncryptedStream;
 use crate::shared_file::SharedFile;
 use crate::transmitic_stream::TransmiticStream;
+use crate::utils::get_file_by_path;
 
 #[derive(Clone)]
 pub enum SharingState {
@@ -278,10 +280,98 @@ impl SingleUploader {
 			}
         }
         else if client_message == MSG_FILE_SELECTION_CONTINUE {
+            let mut payload_bytes: Vec<u8> = Vec::new();
+            payload_bytes.extend_from_slice(encrypted_stream.get_payload());
             
+            let file_seek_point: u64;
+            let client_file_choice: &str;
+            let mut seek_bytes: [u8; 8] = [0; 8];
+            seek_bytes.copy_from_slice(&payload_bytes[0..8]);
+            file_seek_point = u64::from_be_bytes(seek_bytes);
+            client_file_choice = std::str::from_utf8(&payload_bytes[8..]).unwrap();
+    
+            println!("    File seek point: {}", file_seek_point);
+            println!("    Client chose file {}", client_file_choice);
+
+            // Determine if client's choice is valid
+            let client_shared_file = match get_file_by_path(client_file_choice, &everything_file) {
+                Some(file) =>  file,
+                None => {
+                    println!("    ! Invalid file choice");				
+                    match encrypted_stream.write(MSG_FILE_INVALID_FILE, &Vec::with_capacity(1)) {
+                        Ok(_) => {},
+                        Err(e) => {
+                            println!("{:?}", e);
+                            return Err(e);
+                        },
+                    }
+                    return Ok(());
+                }
+            };
+
+            // Client cannot select a directory. Client should not allow this to happen.
+            if client_shared_file.is_directory {
+                println!("    ! Selected directory. Not allowed.");
+                match encrypted_stream.write(MSG_CANNOT_SELECT_DIRECTORY, &Vec::with_capacity(1)) {
+                    Ok(_) => {},
+                    Err(e) => {
+                        println!("{:?}", e);
+                        return Err(e);
+                    },
+                }
+                return Ok(());
+            }
+
+            // Send file to client
+            let mut f = OpenOptions::new()
+                .read(true)
+                .open(client_file_choice)
+                .unwrap();
+            f.seek(SeekFrom::Start(file_seek_point)).unwrap();
+
+            println!("Start sending file");
+
+            let mut read_response = 1; // TODO combine with loop?
+            let mut read_buffer = [0; MAX_DATA_SIZE];
+            let mut current_sent_bytes: usize = file_seek_point as usize;
+            let mut download_percent: f64;
+            let file_size_f64: f64 = client_shared_file.file_size as f64;
+            while read_response != 0 {
+                read_response = f.read(&mut read_buffer).unwrap();
+
+                match encrypted_stream.write(MSG_FILE_CHUNK, &read_buffer[0..read_response].to_vec()) {
+                    Ok(_) => {},
+                    Err(e) => {
+                        println!("{:?}", e);
+                        return Err(e);
+                    },
+                }
+
+                current_sent_bytes += read_response;
+                download_percent = ((current_sent_bytes as f64) / file_size_f64) * (100 as f64);
+                println!("{}", download_percent);
+                // TODO update download percent
+                // Check if should reset
+            }
+
+            
+            // Finished sending file
+            println!("Send message finished");
+            match encrypted_stream.write(MSG_FILE_FINISHED, &Vec::with_capacity(1)) {
+                Ok(_) => {},
+                Err(e) => {
+                    println!("{:?}", e);
+                    return Err(e);
+                },
+            }
+            println!("File transfer complete");
+            // TODO update is downloading = false
+            // TODO update finished downloads list
+
+        } else {
+            return Err(format!("Invalid client selection {}", client_message.to_string()))?;
         }
 
-        panic!("LOOP FIN");
 
         return Ok(());
     }

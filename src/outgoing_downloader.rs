@@ -2,11 +2,11 @@ use core::time;
 use std::{
     env,
     error::Error,
-    fs,
-    path::{Path, PathBuf}, collections::{VecDeque, HashMap}, ops::Index, net::{SocketAddr, TcpStream, Shutdown}, io::{Write, Read}, convert::TryInto,
+    fs::{self, metadata, File, OpenOptions},
+    path::{Path, PathBuf}, collections::{VecDeque, HashMap}, ops::Index, net::{SocketAddr, TcpStream, Shutdown}, io::{Write, Read, SeekFrom, Seek}, convert::TryInto,
 };
 
-use crate::shared_file::{SharedFile, remove_invalid_files, print_shared_files};
+use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files}, utils::get_file_by_path, encrypted_stream::{self, EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -82,6 +82,12 @@ fn get_path_dir_downloads() -> Result<PathBuf, std::io::Error> {
     return Ok(path);
 }
 
+fn get_path_downloads_dir_user(user: &String)  -> Result<PathBuf, std::io::Error> {
+    let mut path = get_path_dir_downloads()?;
+    path.push(user);
+    return Ok(path);
+}
+
 // Single Downloader
 
 enum MessageSingleDownloader {
@@ -133,6 +139,10 @@ impl SingleDownloader {
     pub fn run(&mut self) {
 
         self.initialize_download_queue();
+
+        let root_download_dir = get_path_downloads_dir_user(&self.shared_user.nickname).unwrap();
+        let mut root_download_dir = root_download_dir.into_os_string().to_str().unwrap().to_string();
+        root_download_dir.push_str("/");
 
         while true {
             self.read_receiver();
@@ -196,15 +206,27 @@ impl SingleDownloader {
             remove_invalid_files(&mut everything_file);
 
             print_shared_files(&everything_file, &"".to_string());
-
-            panic!("SEND COMPLETE ");
-
-
             
             let path_active_download = match self.download_queue.get(0) {
                 Some(path_active_download) => path_active_download.clone(),
                 None => todo!(),  // TODO this should never happen. log. Combine with the above isempty check?
             };
+
+            println!("{}", path_active_download);
+
+            // Check if file is valid
+            let shared_file = match get_file_by_path(&path_active_download, &everything_file) {
+                Some(file) =>  file,
+                None => {
+                    panic!("invlaid file choice");
+                    // TODO add invalid download list
+                    // TODO remove from download queue
+                }
+            };
+
+            self.download_shared_file(&mut encrypted_stream, &shared_file, &root_download_dir, &root_download_dir);
+            
+            panic!("SEND COMPLETE ");
 
             self.read_receiver();
 
@@ -218,8 +240,100 @@ impl SingleDownloader {
             if self.is_downloading_paused {
                 // Stop downloading file
             }
-                
 
+        }
+    }
+
+    fn download_shared_file(&mut self, encrypted_stream: &mut EncryptedStream, shared_file: &SharedFile, root_download_dir: &String, download_dir: &String) {
+        let current_path_obj = Path::new(&shared_file.path);
+        let current_path_name = current_path_obj.file_name().unwrap().to_str().unwrap();
+
+        if shared_file.is_directory {
+            let mut new_download_dir = String::from(download_dir);
+            new_download_dir.push_str(current_path_name);
+            new_download_dir.push_str(&"/".to_string());
+            for a_file in &shared_file.files {
+                self.download_shared_file(
+                    encrypted_stream,
+                    a_file,
+                    &new_download_dir,
+                    root_download_dir,
+                );
+
+                // TODO check download cancelled, reset connection
+            }
+
+            
+        } else {
+            // Create directory for file download
+            fs::create_dir_all(&download_dir).unwrap();
+            let mut destination_path = download_dir.clone();
+            destination_path.push_str(current_path_name);
+            println!("Saving to: {}", destination_path);
+
+            // Send selection to server
+            println!("Sending selection to server");
+            let selection_msg: u16;
+            let selection_payload: Vec<u8>;
+            let file_length: u64;
+            if Path::new(&destination_path).exists() {
+                file_length = metadata(&destination_path).unwrap().len();
+            } else {
+                file_length = 0;
+            }
+            let mut file_continue_payload = file_length.to_be_bytes().to_vec();
+            file_continue_payload.extend_from_slice(&shared_file.path.as_bytes());
+            selection_msg = MSG_FILE_SELECTION_CONTINUE;
+            selection_payload = file_continue_payload;
+            encrypted_stream.write(selection_msg, &selection_payload).unwrap();
+
+            // Check first response for error
+            encrypted_stream.read().unwrap();
+            let remote_message = encrypted_stream.get_message().unwrap();
+            println!("{:?}", remote_message);
+
+            // TODO check FILE_INVALID, CANNOT SELECT DIR, MSG_FILE_CHUNK, MSG_FILE_FINISHED
+            // And blanket unexpected
+
+            // Valid file, download it
+            let mut current_downloaded_bytes: usize;
+            let mut f: File;
+            // TODO use .create() and remove else?
+            if Path::new(&destination_path).exists() {
+                f = OpenOptions::new()
+                    .write(true)
+                    .open(&destination_path)
+                    .unwrap();
+                f.seek(SeekFrom::End(0)).unwrap();
+                current_downloaded_bytes = metadata(&destination_path).unwrap().len() as usize;
+            } else {
+                f = File::create(&destination_path).unwrap();
+                current_downloaded_bytes = 0;
+            }
+
+            // TODO check if reset connection, stop active download
+            // TODO update current downloaded bytes
+
+            loop {
+                let mut payload_bytes: Vec<u8> = Vec::new();
+                payload_bytes.extend_from_slice(encrypted_stream.get_payload());
+                current_downloaded_bytes += payload_bytes.len();
+                f.write(&payload_bytes);
+
+                encrypted_stream.read().unwrap();
+                let remote_message = encrypted_stream.get_message().unwrap();
+
+                // TODO check reset, cancelled download
+
+                if remote_message == MSG_FILE_FINISHED {
+                    // TODO
+                    println!("100%\nDownload finished: {}", destination_path);
+                    break;
+                }
+                if remote_message != MSG_FILE_CHUNK {
+                    panic!("Expected MSG_FILE_CHUNK, got {}", remote_message);
+                }
+            }
         }
     }
 
