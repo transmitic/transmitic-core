@@ -109,6 +109,7 @@ struct SingleDownloader {
     path_queue_file: PathBuf,
     download_queue: VecDeque<String>,
     is_downloading_paused: bool,
+    stop_downloading: bool,
 }
 
 impl SingleDownloader {
@@ -133,6 +134,7 @@ impl SingleDownloader {
             path_queue_file,
             download_queue,
             is_downloading_paused: false,
+            stop_downloading: false,
         };
     }
 
@@ -146,6 +148,8 @@ impl SingleDownloader {
 
         while true {
             self.read_receiver();
+
+            self.stop_downloading = false;
 
             if self.is_downloading_paused {
                 thread::sleep(time::Duration::from_secs(1));
@@ -207,39 +211,41 @@ impl SingleDownloader {
 
             print_shared_files(&everything_file, &"".to_string());
             
-            let path_active_download = match self.download_queue.get(0) {
-                Some(path_active_download) => path_active_download.clone(),
-                None => todo!(),  // TODO this should never happen. log. Combine with the above isempty check?
-            };
+            loop {
+                let path_active_download = match self.download_queue.get(0) {
+                    Some(path_active_download) => path_active_download.clone(),
+                    None => {
+                        println!("Download queue empty");
+                        break;
+                    }
+                };
 
-            println!("{}", path_active_download);
+                println!("{}", path_active_download);
 
-            // Check if file is valid
-            let shared_file = match get_file_by_path(&path_active_download, &everything_file) {
-                Some(file) =>  file,
-                None => {
-                    panic!("invlaid file choice");
-                    // TODO add invalid download list
-                    // TODO remove from download queue
-                }
-            };
+                // Check if file is valid
+                let shared_file = match get_file_by_path(&path_active_download, &everything_file) {
+                    Some(file) =>  file,
+                    None => {
+                        panic!("invlaid file choice");
+                        // TODO add invalid download list
+                        // TODO remove from download queue
+                    }
+                };
 
-            self.download_shared_file(&mut encrypted_stream, &shared_file, &root_download_dir, &root_download_dir);
-            
-            panic!("SEND COMPLETE ");
+                self.download_shared_file(&mut encrypted_stream, &shared_file, &root_download_dir, &root_download_dir);
 
-            self.read_receiver();
-
-            // Check if this active download has been cancelled
-            if !self.download_queue.is_empty() {
-                if self.download_queue.get(0) != Some(&path_active_download) {
-                    // Stop downloading file
+                // TODO what if the download failed? don't pop
+                self.download_queue.pop_front();
+                self.write_queue();
+                
+                // TODO
+                self.read_receiver();
+                if self.stop_downloading {
+                    break;
                 }
             }
 
-            if self.is_downloading_paused {
-                // Stop downloading file
-            }
+            // TODO shutdown stream
 
         }
     }
@@ -256,11 +262,15 @@ impl SingleDownloader {
                 self.download_shared_file(
                     encrypted_stream,
                     a_file,
-                    &new_download_dir,
                     root_download_dir,
+                    &new_download_dir,
                 );
 
                 // TODO check download cancelled, reset connection
+                self.read_receiver();
+                if self.stop_downloading {
+                    return;
+                }
             }
 
             
@@ -311,20 +321,24 @@ impl SingleDownloader {
                 current_downloaded_bytes = 0;
             }
 
-            // TODO check if reset connection, stop active download
             // TODO update current downloaded bytes
 
             loop {
+
                 let mut payload_bytes: Vec<u8> = Vec::new();
                 payload_bytes.extend_from_slice(encrypted_stream.get_payload());
                 current_downloaded_bytes += payload_bytes.len();
-                f.write(&payload_bytes);
+                f.write(&payload_bytes).unwrap();
 
                 encrypted_stream.read().unwrap();
-                let remote_message = encrypted_stream.get_message().unwrap();
 
                 // TODO check reset, cancelled download
+                self.read_receiver();
+                if self.stop_downloading {
+                    return;
+                }
 
+                let remote_message = encrypted_stream.get_message().unwrap();
                 if remote_message == MSG_FILE_FINISHED {
                     // TODO
                     println!("100%\nDownload finished: {}", destination_path);
@@ -338,27 +352,35 @@ impl SingleDownloader {
     }
 
     fn read_receiver(&mut self) {
-        match self.receiver.try_recv() {
-            Ok(value) => match value {
-                MessageSingleDownloader::NewConfig {
-                    private_id_bytes,
-                    shared_user,
-                } => todo!(), // TODO
-                MessageSingleDownloader::NewDownload(s) => self.download_queue.push_back(s),
-                MessageSingleDownloader::CancelDownload(s) => {
-                    self.download_queue.retain(|f| f != &s);
+        loop{
+            match self.receiver.try_recv() {
+                Ok(value) => match value {
+                    MessageSingleDownloader::NewConfig {
+                        private_id_bytes,
+                        shared_user,
+                    } => todo!(), // TODO
+                    MessageSingleDownloader::NewDownload(s) => {
+                        self.download_queue.push_back(s);
+                        self.write_queue();
+                    },
+                    MessageSingleDownloader::CancelDownload(s) => {
+                        self.download_queue.retain(|f| f != &s);
+                        self.stop_downloading = true;
+                        self.write_queue();
+                    },
+                    MessageSingleDownloader::PauseDownloads => {
+                        self.is_downloading_paused = true;
+                        self.stop_downloading = true;
+                    },
+                    MessageSingleDownloader::ResumeDownloads => {
+                        self.is_downloading_paused = false;
+                    }
                 },
-                MessageSingleDownloader::PauseDownloads => {
-                    self.is_downloading_paused = true;
+                Err(e) => match e {
+                    mpsc::TryRecvError::Empty => return,
+                    mpsc::TryRecvError::Disconnected => return, // TODO log. When would this happen?
                 },
-                MessageSingleDownloader::ResumeDownloads => {
-                    self.is_downloading_paused = false;
-                }
-            },
-            Err(e) => match e {
-                mpsc::TryRecvError::Empty => return,
-                mpsc::TryRecvError::Disconnected => return, // TODO log. When would this happen?
-            },
+            }
         }
     }
 
@@ -379,4 +401,21 @@ impl SingleDownloader {
             }
         }
     }
+
+    fn write_queue(&self) {
+		let mut write_string = String::new();
+
+		for f in &self.download_queue {
+			write_string.push_str(&format!("{}\n", f));
+		}
+
+		let mut f = OpenOptions::new()
+			.write(true)
+			.create(true)
+			.truncate(true)
+			.open(&self.path_queue_file)
+			.unwrap();
+		f.write(write_string.as_bytes()).unwrap();
+	}
+
 }
