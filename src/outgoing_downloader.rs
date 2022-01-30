@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf}, collections::{VecDeque, HashMap}, ops::Index, net::{SocketAddr, TcpStream, Shutdown}, io::{Write, Read, SeekFrom, Seek}, convert::TryInto,
 };
 
-use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files}, utils::get_file_by_path, encrypted_stream::{self, EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}};
+use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload}, utils::get_file_by_path, encrypted_stream::{self, EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -41,30 +41,82 @@ impl OutgoingDownloader {
 
     pub fn start_downloading(&mut self) {
         for user in self.config.get_shared_users() {
-            let (sx, rx): (
-                Sender<MessageSingleDownloader>,
-                Receiver<MessageSingleDownloader>,
-            ) = mpsc::channel();
-
-            let mut path_queue_file: PathBuf = self.config.get_path_dir_config();
-            path_queue_file.push(format!("{}.txt", user.nickname));
-            
-            let private_id_bytes = self.config.get_local_private_id_bytes();
-
-            self.channel_map.insert(user.nickname.clone(), sx);
-
-            if path_queue_file.exists() {
-                thread::spawn(move || {
-                    let mut downloader =
-                        SingleDownloader::new(rx, private_id_bytes, user.clone(), path_queue_file);
-                    downloader.run();
-                    println!(
-                        "single downloader thread final exit {}",
-                        user.nickname.clone()
-                    );  // TODO log
-                });
-            }
+            self.start_downloading_single_user(user);
         }
+    }
+
+    fn start_downloading_single_user(&mut self, user: SharedUser) {
+        let (sx, rx): (
+            Sender<MessageSingleDownloader>,
+            Receiver<MessageSingleDownloader>,
+        ) = mpsc::channel();
+
+        // TODO func
+        let mut path_queue_file: PathBuf = self.config.get_path_dir_config();
+        path_queue_file.push(format!("{}.txt", user.nickname));
+        
+        let private_id_bytes = self.config.get_local_private_id_bytes();
+
+        if path_queue_file.exists() {
+            self.channel_map.insert(user.nickname.clone(), sx);
+            thread::spawn(move || {
+                let mut downloader =
+                    SingleDownloader::new(rx, private_id_bytes, user.clone(), path_queue_file);
+                downloader.run();
+                println!(
+                    "single downloader thread final exit {}",
+                    user.nickname.clone()
+                );  // TODO log
+            });
+        }
+    }
+
+    pub fn download_selected(&mut self, downloads: Vec<SelectedDownload>) -> Result<(), Box<dyn Error>> {
+
+        for download in downloads {
+            
+            match self.channel_map.get(&download.owner) {
+                Some(channel) => {         
+                    match channel.send(MessageSingleDownloader::NewDownload(download.path)) {
+                        Ok(_) => todo!(),
+                        Err(e) => {
+                            todo!("log")
+                            // TODO the thread must have shut down?
+                            //  If so, cleanup already occurred
+                            //  But this didn't make it into the queue file
+                            //  Queue files should be maintained by main thread?
+                        },
+                    }
+                },
+                None => {
+                    // TODO func        
+                    let mut path_queue_file: PathBuf = self.config.get_path_dir_config();
+                    path_queue_file.push(format!("{}.txt", download.owner));
+
+                    match fs::write(path_queue_file.as_os_str(), download.path) {
+                        Ok(_) => {
+                            for user in self.config.get_shared_users() {
+                                if user.nickname == download.owner {
+                                    self.start_downloading_single_user(user);
+                                    break;
+                                }
+                            }                            
+                        },
+                        Err(_) => {
+                            // TODO
+                            todo!("log")
+                        },
+                    }
+                },
+            }
+
+
+        }
+
+
+        
+
+        return Ok(());
     }
 }
 

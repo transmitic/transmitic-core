@@ -2,6 +2,11 @@ use serde::{Serialize, Deserialize};
 
 use crate::config::file_contains_only_valid_chars;
 
+#[derive(Debug, Clone)]
+pub struct SelectedDownload {
+    pub path: String,
+    pub owner: String,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SharedFile {

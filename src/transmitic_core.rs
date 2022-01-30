@@ -5,7 +5,7 @@ use ring::{
 	signature::{self, KeyPair},
 };
 
-use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader, self}, incoming_uploader::{IncomingUploader, self, SharingState}};
+use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader, self}, incoming_uploader::{IncomingUploader, self, SharingState}, shared_file::SelectedDownload};
 
 pub struct LocalKeyData {
 	pub local_key_pair: signature::Ed25519KeyPair,
@@ -61,6 +61,11 @@ impl TransmiticCore {
 
     pub fn create_new_id(&mut self) -> Result<(), Box<dyn Error>> {
         self.config.create_new_id()?;
+        return Ok(());
+    }
+
+    pub fn download_selected(&mut self, downloads: Vec<SelectedDownload>) -> Result<(), Box<dyn Error>> {
+        self.outgoing_downloader.download_selected(downloads)?;
         return Ok(());
     }
 
