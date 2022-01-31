@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use serde::{Serialize, Deserialize};
 
 use crate::config::file_contains_only_valid_chars;
@@ -6,6 +8,12 @@ use crate::config::file_contains_only_valid_chars;
 pub struct SelectedDownload {
     pub path: String,
     pub owner: String,
+}
+
+#[derive(Debug)]
+pub struct RefreshData {
+    pub owner: String,
+    pub data: Result<SharedFile, Box<dyn Error>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

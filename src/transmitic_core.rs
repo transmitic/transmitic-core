@@ -5,7 +5,7 @@ use ring::{
 	signature::{self, KeyPair},
 };
 
-use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader, self}, incoming_uploader::{IncomingUploader, self, SharingState}, shared_file::SelectedDownload};
+use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader, self}, incoming_uploader::{IncomingUploader, self, SharingState}, shared_file::{SelectedDownload, RefreshData}};
 
 pub struct LocalKeyData {
 	pub local_key_pair: signature::Ed25519KeyPair,
@@ -93,6 +93,10 @@ impl TransmiticCore {
 
     pub fn get_sharing_port(&self) -> String {
         return self.config.get_sharing_port();
+    }
+
+    pub fn refresh_shared_with_me(&mut self) -> Vec<RefreshData> {
+        return self.outgoing_downloader.refresh_shared_with_me();
     }
 
     pub fn remove_file_from_sharing(&mut self, file_path: String) -> Result<(), Box<dyn Error>> {

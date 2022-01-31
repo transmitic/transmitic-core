@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf}, collections::{VecDeque, HashMap}, ops::Index, net::{SocketAddr, TcpStream, Shutdown}, io::{Write, Read, SeekFrom, Seek}, convert::TryInto,
 };
 
-use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload}, utils::get_file_by_path, encrypted_stream::{self, EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}};
+use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload, RefreshData}, utils::get_file_by_path, encrypted_stream::{self, EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -110,13 +110,69 @@ impl OutgoingDownloader {
                 },
             }
 
-
         }
 
-
-        
-
         return Ok(());
+    }
+
+    pub fn refresh_shared_with_me(&mut self) -> Vec<RefreshData> {
+        let mut refresh_list= Vec::new();
+        for shared_user in self.config.get_shared_users() {
+            let r = self.refresh_single_user(&shared_user);
+            refresh_list.push(RefreshData {owner: shared_user.nickname, data: r});
+        }
+
+        return refresh_list;
+    }
+
+    fn refresh_single_user(&mut self, shared_user: &SharedUser) -> Result<SharedFile, Box<dyn Error>> {
+        // TODO duped with single downloader
+        // CREATE CONNECTION
+        let mut remote_address = shared_user.ip.clone();
+        remote_address.push_str(&format!(":{}", shared_user.port.clone()));
+        println!("Downloader outgoing {} {}", shared_user.nickname, remote_address);
+
+        let remote_socket_address: SocketAddr = match remote_address.parse() {
+            Ok(remote_socket_address) => remote_socket_address,
+            Err(e) => return Err(Box::new(e)), // TODO. This shouldn't happen. log.
+        };
+
+        let mut stream = match TcpStream::connect_timeout(&remote_socket_address, time::Duration::from_secs(2)) {
+            Ok(stream) => stream,
+            Err(e) => {
+                println!("Failed '{}' refresh. Could not connect to '{}': {:?}", shared_user.nickname, remote_socket_address, e); // TODO log
+                return Err(Box::new(e));
+            }
+        };
+        
+        let mut transmitic_stream = TransmiticStream::new(stream, shared_user.clone(), self.config.get_local_private_id_bytes());
+        let mut encrypted_stream = transmitic_stream.connect()?; // TODO remove unwrap
+        
+        // request file list
+        let message: u16 = MSG_FILE_LIST;
+        let payload: Vec<u8> = Vec::new();
+        encrypted_stream.write(message, &payload)?;
+
+        let mut json_bytes: Vec<u8> = Vec::new();
+        loop {
+            encrypted_stream.read()?;
+            let client_message = encrypted_stream.get_message()?;
+            json_bytes.extend_from_slice(encrypted_stream.get_payload());
+
+            if client_message == MSG_FILE_LIST_FINAL {
+                break;
+            }
+        }
+
+        println!("{:?}", json_bytes);
+        let files_str = std::str::from_utf8(&json_bytes)?;
+        let mut everything_file: SharedFile = serde_json::from_str(&files_str)?;
+
+        remove_invalid_files(&mut everything_file);
+
+        print_shared_files(&everything_file, &"".to_string());
+
+        return Ok(everything_file);
     }
 }
 
@@ -141,7 +197,6 @@ fn get_path_downloads_dir_user(user: &String)  -> Result<PathBuf, std::io::Error
 }
 
 // Single Downloader
-
 enum MessageSingleDownloader {
     NewConfig {
         private_id_bytes: Vec<u8>,
@@ -216,7 +271,8 @@ impl SingleDownloader {
             // TODO add backoff
 
             // ------ DOWNLOAD FROM QUEUE
-
+            
+            // TODO duped with refresh_shared_with_me
             // CREATE CONNECTION
             let mut remote_address = self.shared_user.ip.clone();
             remote_address.push_str(&format!(":{}", self.shared_user.port.clone()));
