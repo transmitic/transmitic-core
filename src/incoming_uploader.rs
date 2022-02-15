@@ -9,6 +9,7 @@ use std::thread;
 
 use serde::__private::de::TagContentOtherField;
 
+use crate::app_aggregator::AppAggMessage;
 use crate::config::{Config, SharedUser, get_everything_file};
 use crate::core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT, MSG_FILE_LIST, MSG_FILE_SELECTION_CONTINUE, MAX_DATA_SIZE, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE, MSG_FILE_INVALID_FILE, MSG_CANNOT_SELECT_DIRECTORY, MSG_FILE_CHUNK, MSG_FILE_FINISHED};
 use crate::encrypted_stream::EncryptedStream;
@@ -35,7 +36,7 @@ pub struct IncomingUploader {
 
 impl IncomingUploader {
 
-    pub fn new(config: Config) -> IncomingUploader {
+    pub fn new(config: Config, app_sender: Sender<AppAggMessage>) -> IncomingUploader {
         println!("Starting incoming uploader");
         let (sx, rx): (
             Sender<MessageUploadManager>,
@@ -43,7 +44,7 @@ impl IncomingUploader {
         ) = mpsc::channel();
 
         thread::spawn(move || {
-            let mut uploader_manager = UploaderManager::new(rx, config, SharingState::Local);
+            let mut uploader_manager = UploaderManager::new(rx, config, SharingState::Local, app_sender);
             uploader_manager.run();
         });
 
@@ -63,11 +64,12 @@ struct UploaderManager {
     // 1. Map usize to Senders. SingleUploader gets its ID. At shutdown send to AppAggreator to pop it
     //  When adding a new one loop through usize until you find available int.
     single_uploaders: Vec<Sender<MessageSingleUploader>>,
+    app_sender: Sender<AppAggMessage>,
 }
 
 impl UploaderManager {
 
-    pub fn new(receiver: Receiver<MessageUploadManager>, config: Config, sharing_state: SharingState) -> UploaderManager {
+    pub fn new(receiver: Receiver<MessageUploadManager>, config: Config, sharing_state: SharingState, app_sender: Sender<AppAggMessage>) -> UploaderManager {
 
         println!("starting uploader manager");
         let single_uploaders = Vec::new();
@@ -77,6 +79,7 @@ impl UploaderManager {
             config,
             sharing_state,
             single_uploaders,
+            app_sender,
         }
     }
 
@@ -120,8 +123,9 @@ impl UploaderManager {
                         ) = mpsc::channel();
                         self.single_uploaders.push(sx);
                         let single_config = self.config.clone();
+                        let app_sender_clone = self.app_sender.clone();
                         thread::spawn(move || {
-                            let mut single_uploader = SingleUploader::new(rx, single_config);
+                            let mut single_uploader = SingleUploader::new(rx, single_config, app_sender_clone);
                             single_uploader.run(stream);
                         });
 
@@ -155,17 +159,19 @@ struct SingleUploader {
     receiver: Receiver<MessageSingleUploader>,
     config: Config,
     nickname: String,
+    app_sender: Sender<AppAggMessage>,
 }
 
 impl SingleUploader {
 
-    pub fn new(receiver: Receiver<MessageSingleUploader>, config: Config) -> SingleUploader {
+    pub fn new(receiver: Receiver<MessageSingleUploader>, config: Config, app_sender: Sender<AppAggMessage>) -> SingleUploader {
 
         let nickname =  String::new();
         return SingleUploader {
             receiver,
             config,
             nickname,
+            app_sender,
         }
     }
 
@@ -180,6 +186,7 @@ impl SingleUploader {
         };
 
         let client_connecting_ip = client_connecting_addr.ip().to_string();
+        self.app_sender.send(AppAggMessage::StringLog(format!("Incoming Connecting: {}", client_connecting_ip))).unwrap();
 
         // Find valid SharedUser
         let mut shared_user: Option<SharedUser> = None;

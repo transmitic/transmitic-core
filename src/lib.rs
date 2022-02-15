@@ -1,3 +1,4 @@
+pub mod app_aggregator;
 pub mod config;
 pub mod core_consts;
 pub mod crypto;

@@ -1,11 +1,11 @@
-use std::{error::Error, net::{SocketAddr, Incoming}, sync::{Arc, Mutex}, thread};
+use std::{error::Error, net::{SocketAddr, Incoming}, sync::{Arc, Mutex, RwLock, mpsc::Sender}, thread};
 
 extern crate x25519_dalek;
 use ring::{
 	signature::{self, KeyPair},
 };
 
-use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader, self}, incoming_uploader::{IncomingUploader, self, SharingState}, shared_file::{SelectedDownload, RefreshData}};
+use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader, self}, incoming_uploader::{IncomingUploader, self, SharingState}, shared_file::{SelectedDownload, RefreshData}, app_aggregator::{AppAggregator, AppAggMessage}};
 
 pub struct LocalKeyData {
 	pub local_key_pair: signature::Ed25519KeyPair,
@@ -18,7 +18,46 @@ pub struct TransmiticCore {
     sharing_state: SharingState,
     outgoing_downloader: OutgoingDownloader,
     incoming_uploader: IncomingUploader,
+    app_sender: Sender<AppAggMessage>,
 }
+
+struct DownloadStatus {
+    pub owner: String,
+    pub percent: u32,
+    pub path: String,
+}
+
+impl DownloadStatus {
+
+    pub fn new() -> DownloadStatus {
+        return DownloadStatus {
+            owner: "".to_string(),
+            percent: 0,
+            path: "Hello".to_string(),
+        }
+    }
+
+    pub fn addit(&mut self) {
+        self.owner = "bye".to_string();
+    }
+}
+
+// Dynamic: In Progress, Queued
+// Static: Finished, Invalid
+
+// Downloader Sends
+// nickname: String
+// inprogress_path: String
+// inprogress_percent: usize
+// queue: list<String>
+// completed: string
+// invalid: string
+
+struct TotalDownloadState {
+    pub in_progress: Vec<DownloadStatus>,
+    pub invalid: Vec<DownloadStatus>,
+}
+
 
 // TODO search for all unwraps
 // TODO how to handle non existing files?
@@ -30,10 +69,27 @@ impl TransmiticCore {
         let config = Config::new()?;
         let is_first_start = config.is_first_start();
 
-        let mut outgoing_downloader = OutgoingDownloader::new(config.clone())?;
+        let mut app_agg = AppAggregator::new();
+        let mut app_sender = app_agg.start();
+
+        app_sender.send(AppAggMessage::StringLog("AppAgg started".to_string()))?;
+
+        let d = DownloadStatus::new();
+        let lock = RwLock::new(d);
+
+        {
+            let mut l = match lock.write() {
+                Ok(l) => l,
+                Err(_) => todo!(),
+            };
+
+            l.addit();
+        }
+
+        let mut outgoing_downloader = OutgoingDownloader::new(config.clone(), app_sender.clone())?;
         outgoing_downloader.start_downloading();
 
-        let mut incoming_uploader = IncomingUploader::new(config.clone());
+        let mut incoming_uploader = IncomingUploader::new(config.clone(), app_sender.clone());
 
         return Ok(TransmiticCore {
             config: config,
@@ -41,6 +97,7 @@ impl TransmiticCore {
             sharing_state: SharingState::Off,
             outgoing_downloader,
             incoming_uploader,
+            app_sender,
         });
     }
 
