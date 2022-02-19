@@ -1,6 +1,7 @@
-use std::{error::Error, net::{SocketAddr, Incoming}, sync::{Arc, Mutex, RwLock, mpsc::Sender}, thread};
+use std::{error::Error, net::{SocketAddr, Incoming}, sync::{Arc, Mutex, RwLock, mpsc::Sender}, thread, collections::{HashMap, VecDeque}, hash::Hash};
 
 extern crate x25519_dalek;
+use aes_gcm::aead::heapless::spsc::SingleCore;
 use ring::{
 	signature::{self, KeyPair},
 };
@@ -19,6 +20,7 @@ pub struct TransmiticCore {
     outgoing_downloader: OutgoingDownloader,
     incoming_uploader: IncomingUploader,
     app_sender: Sender<AppAggMessage>,
+    download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
 }
 
 struct DownloadStatus {
@@ -58,10 +60,45 @@ struct TotalDownloadState {
     pub invalid: Vec<DownloadStatus>,
 }
 
+// struct DownloadState {
+//     state_map: HashMap<String, SingleDownloadState>,
+// }
+
+// impl DownloadState {
+
+//     pub fn new() -> DownloadState {
+
+//         return DownloadState {
+
+//         }
+//     }
+// }
+
 
 // TODO search for all unwraps
 // TODO how to handle non existing files?
 // TODO allow empty IP, port, and PublicIDs. "placeholder" users
+
+pub struct SingleDownloadState {
+    pub active_download_path: Option<String>,
+    pub active_download_percent: u64,
+    pub download_queue: VecDeque<String>,
+    pub invalid_downloads: Vec<String>,
+    pub completed_downloads: Vec<String>,
+}
+
+impl SingleDownloadState {
+    pub fn new() -> SingleDownloadState {
+
+        return SingleDownloadState {
+            active_download_path: None,
+            active_download_percent: 0,
+            download_queue: VecDeque::new(),
+            invalid_downloads: Vec::new(),
+            completed_downloads: Vec::new(),
+        }
+    }
+}
 
 impl TransmiticCore {
 
@@ -69,22 +106,15 @@ impl TransmiticCore {
         let config = Config::new()?;
         let is_first_start = config.is_first_start();
 
+        let download_state: HashMap<String, SingleDownloadState> = HashMap::new();
+        let download_state_lock = RwLock::new(download_state);
+        let arc_download_state = Arc::new(download_state_lock);
+        let arc_clone = Arc::clone(&arc_download_state);
+
         let mut app_agg = AppAggregator::new();
-        let mut app_sender = app_agg.start();
+        let mut app_sender = app_agg.start(arc_clone);
 
         app_sender.send(AppAggMessage::StringLog("AppAgg started".to_string()))?;
-
-        let d = DownloadStatus::new();
-        let lock = RwLock::new(d);
-
-        {
-            let mut l = match lock.write() {
-                Ok(l) => l,
-                Err(_) => todo!(),
-            };
-
-            l.addit();
-        }
 
         let mut outgoing_downloader = OutgoingDownloader::new(config.clone(), app_sender.clone())?;
         outgoing_downloader.start_downloading();
@@ -98,6 +128,7 @@ impl TransmiticCore {
             outgoing_downloader,
             incoming_uploader,
             app_sender,
+            download_state: arc_download_state,
         });
     }
 

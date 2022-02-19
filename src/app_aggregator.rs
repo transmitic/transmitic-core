@@ -1,7 +1,10 @@
-use std::collections::VecDeque;
-use std::sync::mpsc;
+use std::collections::{VecDeque, HashMap};
+use std::hash::Hash;
+use std::sync::{mpsc, RwLock, Arc};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
+
+use crate::transmitic_core::SingleDownloadState;
 
 
 struct DownloadStatus {
@@ -54,11 +57,11 @@ impl AppAggregator {
 
     }
 
-    pub fn start(&self) -> Sender<AppAggMessage>{
+    pub fn start(&self, downlaod_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>) -> Sender<AppAggMessage>{
         let (sender, receiver): (Sender<AppAggMessage>, Receiver<AppAggMessage>) = mpsc::channel();
 
         thread::spawn(move || {
-            app_loop(receiver);
+            app_loop(receiver, downlaod_state);
         });
 
         return sender;
@@ -66,7 +69,7 @@ impl AppAggregator {
 
 }
 
-fn app_loop(receiver: Receiver<AppAggMessage>) {
+fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>) {
     loop {
         let msg = match receiver.recv() {
             Ok(msg) => msg,
@@ -74,10 +77,55 @@ fn app_loop(receiver: Receiver<AppAggMessage>) {
         };
 
         match msg {
+            // TODO clean up. Struct for download_state instead
             AppAggMessage::StringLog(s) => println!("[LOG] {}", s),
-            AppAggMessage::InvalidFile(_) => todo!(),
-            AppAggMessage::InProgress(_) => todo!(),
-            AppAggMessage::Completed(_) => todo!(),
+            AppAggMessage::InvalidFile(f) => {
+                let mut l = download_state.write().unwrap();
+                match l.get_mut(&f.nickname) {
+                    Some(h) => {
+                        h.invalid_downloads.push(f.invalid_path);
+                        h.download_queue = f.download_queue;
+                    },
+                    None => {
+                        let mut s = SingleDownloadState::new();
+                        s.invalid_downloads.push(f.invalid_path);
+                        s.download_queue = f.download_queue;
+                        l.insert(f.nickname, s);
+                    },
+                }
+            },
+            AppAggMessage::InProgress(f) => {
+                let mut l = download_state.write().unwrap();
+                match l.get_mut(&f.nickname) {
+                    Some(h) => {
+                        h.active_download_path = Some(f.path);
+                        h.active_download_percent = f.percent;
+                        h.download_queue = f.download_queue;
+                    },
+                    None => {
+                        let mut s = SingleDownloadState::new();
+                        s.active_download_path = Some(f.path);
+                        s.active_download_percent = f.percent;
+                        s.download_queue = f.download_queue;
+                        l.insert(f.nickname, s);
+                    },
+                }
+            },
+            AppAggMessage::Completed(f) => {
+                let mut l = download_state.write().unwrap();
+                match l.get_mut(&f.nickname) {
+                    Some(h) => {
+                        h.completed_downloads.push(f.path);
+                        h.download_queue = f.download_queue;
+                    },
+                    None => {
+                        let mut s = SingleDownloadState::new();
+                        s.completed_downloads.push(f.path);
+                        s.download_queue = f.download_queue;
+                        l.insert(f.nickname, s);
+                    },
+                }
+            },
         }
     }
 }
