@@ -35,13 +35,20 @@ pub struct CompletedMessage {
     pub download_queue: VecDeque<String>,
 }
 
+pub struct OfflineMessage {
+    pub nickname: String,
+    pub download_queue: VecDeque<String>,
+}
+
 pub enum AppAggMessage {
     StringLog(String),
     InvalidFile(InvalidFileMessage),
     InProgress(InProgressMessage),
     Completed(CompletedMessage),
+    Offline(OfflineMessage),
 }
 
+// TODO clean up file
 
 pub struct AppAggregator {
     sender: Option<Sender<AppAggMessage>>,
@@ -85,6 +92,7 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
                     Some(h) => {
                         h.invalid_downloads.push(f.invalid_path);
                         h.download_queue = f.download_queue;
+                        h.is_online = true;
                     },
                     None => {
                         let mut s = SingleDownloadState::new();
@@ -101,6 +109,7 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
                         h.active_download_path = Some(f.path);
                         h.active_download_percent = f.percent;
                         h.download_queue = f.download_queue;
+                        h.is_online = true;
                     },
                     None => {
                         let mut s = SingleDownloadState::new();
@@ -117,10 +126,28 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
                     Some(h) => {
                         h.completed_downloads.push(f.path);
                         h.download_queue = f.download_queue;
+                        h.active_download_path = None;
+                        h.is_online = true;
                     },
                     None => {
                         let mut s = SingleDownloadState::new();
                         s.completed_downloads.push(f.path);
+                        s.download_queue = f.download_queue;
+                        s.active_download_path = None;
+                        l.insert(f.nickname, s);
+                    },
+                }
+            },
+            AppAggMessage::Offline(f) => {
+                let mut l = download_state.write().unwrap();
+                match l.get_mut(&f.nickname) {
+                    Some(h) => {
+                        h.is_online = false;
+                        h.download_queue = f.download_queue;
+                    },
+                    None => {
+                        let mut s = SingleDownloadState::new();
+                        s.is_online = false;
                         s.download_queue = f.download_queue;
                         l.insert(f.nickname, s);
                     },

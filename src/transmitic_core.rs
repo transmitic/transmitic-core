@@ -85,6 +85,7 @@ pub struct SingleDownloadState {
     pub download_queue: VecDeque<String>,
     pub invalid_downloads: Vec<String>,
     pub completed_downloads: Vec<String>,
+    pub is_online: bool,
 }
 
 impl SingleDownloadState {
@@ -96,10 +97,12 @@ impl SingleDownloadState {
             download_queue: VecDeque::new(),
             invalid_downloads: Vec::new(),
             completed_downloads: Vec::new(),
+            is_online: true,
         }
     }
 }
 
+// TODO inconsistent naming: active download VS in progress
 impl TransmiticCore {
 
     pub fn new() -> Result<TransmiticCore, Box<dyn Error>> {
@@ -161,6 +164,10 @@ impl TransmiticCore {
         self.config.set_port(port)?;
 
         return Ok(());
+    }
+
+    pub fn get_download_state(&self) -> &Arc<RwLock<HashMap<String, SingleDownloadState>>> {
+        return &self.download_state;
     }
 
     pub fn get_public_id_string(&self) -> String {

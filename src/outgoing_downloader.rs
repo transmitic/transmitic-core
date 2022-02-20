@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf}, collections::{VecDeque, HashMap}, ops::Index, net::{SocketAddr, TcpStream, Shutdown}, io::{Write, Read, SeekFrom, Seek}, convert::TryInto,
 };
 
-use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload, RefreshData}, utils::get_file_by_path, encrypted_stream::{self, EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}, app_aggregator::{AppAggMessage, InvalidFileMessage, InProgressMessage, CompletedMessage}};
+use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload, RefreshData}, utils::get_file_by_path, encrypted_stream::{self, EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}, app_aggregator::{AppAggMessage, InvalidFileMessage, InProgressMessage, CompletedMessage, OfflineMessage}};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -261,6 +261,7 @@ impl SingleDownloader {
     pub fn run(&mut self) {
         self.app_sender.send(AppAggMessage::StringLog(format!("Start outgoing {}", self.shared_user.nickname))).unwrap();
         self.initialize_download_queue();
+        self.app_update_offline();
 
         let root_download_dir = get_path_downloads_dir_user(&self.shared_user.nickname).unwrap();
         let mut root_download_dir = root_download_dir.into_os_string().to_str().unwrap().to_string();
@@ -300,6 +301,7 @@ impl SingleDownloader {
                 Ok(stream) => stream,
                 Err(e) => {
                     println!("Downloader outgoing Could not connect to '{}': {:?}", remote_socket_address, e); // TODO log
+                    self.app_update_offline();
                     thread::sleep(time::Duration::from_secs(1));
                     continue;
                 }
@@ -524,12 +526,20 @@ impl SingleDownloader {
         }
     }
 
+    fn app_update_offline(&self) {
+        let i = OfflineMessage {
+            nickname: self.shared_user.nickname.clone(),
+            download_queue: self.download_queue.clone(),
+        };
+        self.app_sender.send(AppAggMessage::Offline(i)).unwrap();
+    }
+
     fn app_update_in_progress(&self) {
         let i = InProgressMessage {
             nickname: self.shared_user.nickname.clone(),
             path: self.active_download_path.clone(),
-            percent: self.active_downloaded_current_bytes,
-            download_queue: self.download_queue.clone(),
+            percent: ((self.active_downloaded_current_bytes as f64 / self.active_download_size as f64) * (100 as f64)) as u64,
+            download_queue: self.get_queue_without_active(),
         };
         self.app_sender.send(AppAggMessage::InProgress(i)).unwrap();
     }
@@ -538,7 +548,7 @@ impl SingleDownloader {
         let i = CompletedMessage {
             nickname: self.shared_user.nickname.clone(),
             path: path.clone(),
-            download_queue: self.download_queue.clone(),
+            download_queue: self.get_queue_without_active(),
         };
         self.app_sender.send(AppAggMessage::Completed(i)).unwrap();
     }
@@ -547,9 +557,15 @@ impl SingleDownloader {
         let i = InvalidFileMessage{
             nickname: self.shared_user.nickname.clone(),
             invalid_path: path.to_string(),
-            download_queue: self.download_queue.clone(),
+            download_queue: self.get_queue_without_active(),
         };
         self.app_sender.send(AppAggMessage::InvalidFile(i)).unwrap();
+    }
+
+    fn get_queue_without_active(&self) -> VecDeque<String> {
+        let mut queue = self.download_queue.clone();
+        queue.retain(|f| f != &self.active_download_path);
+        return queue;
     }
 
     fn initialize_download_queue(&mut self) {
