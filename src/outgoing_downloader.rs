@@ -461,6 +461,7 @@ impl SingleDownloader {
                 payload_bytes.extend_from_slice(encrypted_stream.get_payload());
                 current_downloaded_bytes += payload_bytes.len();
                 self.active_downloaded_current_bytes += payload_bytes.len() as u64;
+                
                 f.write(&payload_bytes).unwrap();
 
                 self.app_update_in_progress();

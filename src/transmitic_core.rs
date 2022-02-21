@@ -5,8 +5,13 @@ use aes_gcm::aead::heapless::spsc::SingleCore;
 use ring::{
 	signature::{self, KeyPair},
 };
+use serde::{Serialize, Deserialize};
 
 use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader, self}, incoming_uploader::{IncomingUploader, self, SharingState}, shared_file::{SelectedDownload, RefreshData}, app_aggregator::{AppAggregator, AppAggMessage}};
+
+// TODO
+//  https://doc.rust-lang.org/std/sync/struct.BarrierWaitResult.html
+//  https://doc.rust-lang.org/std/sync/struct.Condvar.html
 
 pub struct LocalKeyData {
 	pub local_key_pair: signature::Ed25519KeyPair,
@@ -21,6 +26,7 @@ pub struct TransmiticCore {
     incoming_uploader: IncomingUploader,
     app_sender: Sender<AppAggMessage>,
     download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
+    upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
 }
 
 struct DownloadStatus {
@@ -79,6 +85,14 @@ struct TotalDownloadState {
 // TODO how to handle non existing files?
 // TODO allow empty IP, port, and PublicIDs. "placeholder" users
 
+// TODO add online/offline to state
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SingleUploadState {
+    pub nickname: String,
+    pub path: String,
+    pub percent: u64,
+}
+
 pub struct SingleDownloadState {
     pub active_download_path: Option<String>,
     pub active_download_percent: u64,
@@ -109,13 +123,18 @@ impl TransmiticCore {
         let config = Config::new()?;
         let is_first_start = config.is_first_start();
 
+        let upload_state: HashMap<String, SingleUploadState> = HashMap::new();
+        let upload_state_lock = RwLock::new(upload_state);
+        let arc_upload_state = Arc::new(upload_state_lock);
+        let arc_upload_clone = Arc::clone(&arc_upload_state);
+
         let download_state: HashMap<String, SingleDownloadState> = HashMap::new();
         let download_state_lock = RwLock::new(download_state);
         let arc_download_state = Arc::new(download_state_lock);
         let arc_clone = Arc::clone(&arc_download_state);
 
         let mut app_agg = AppAggregator::new();
-        let mut app_sender = app_agg.start(arc_clone);
+        let mut app_sender = app_agg.start(arc_clone, arc_upload_clone);
 
         app_sender.send(AppAggMessage::StringLog("AppAgg started".to_string()))?;
 
@@ -132,6 +151,7 @@ impl TransmiticCore {
             incoming_uploader,
             app_sender,
             download_state: arc_download_state,
+            upload_state: arc_upload_state,
         });
     }
 
@@ -168,6 +188,10 @@ impl TransmiticCore {
 
     pub fn get_download_state(&self) -> &Arc<RwLock<HashMap<String, SingleDownloadState>>> {
         return &self.download_state;
+    }
+
+    pub fn get_upload_state(&self) -> &Arc<RwLock<HashMap<String, SingleUploadState>>> {
+        return &self.upload_state;
     }
 
     pub fn get_public_id_string(&self) -> String {
@@ -210,6 +234,7 @@ impl TransmiticCore {
     }
 
     pub fn set_my_sharing_state(&mut self, sharing_state: SharingState) {
+        self.incoming_uploader.set_my_sharing_state(sharing_state.clone());
         self.sharing_state = sharing_state;
     }
 

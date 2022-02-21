@@ -14,6 +14,7 @@ use crate::config::{Config, SharedUser, get_everything_file};
 use crate::core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT, MSG_FILE_LIST, MSG_FILE_SELECTION_CONTINUE, MAX_DATA_SIZE, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE, MSG_FILE_INVALID_FILE, MSG_CANNOT_SELECT_DIRECTORY, MSG_FILE_CHUNK, MSG_FILE_FINISHED};
 use crate::encrypted_stream::EncryptedStream;
 use crate::shared_file::SharedFile;
+use crate::transmitic_core::SingleUploadState;
 use crate::transmitic_stream::TransmiticStream;
 use crate::utils::get_file_by_path;
 
@@ -25,7 +26,7 @@ pub enum SharingState {
 }
 
 enum MessageUploadManager {
-
+    SharingStateMsg(SharingState),
 }
 
 
@@ -44,7 +45,7 @@ impl IncomingUploader {
         ) = mpsc::channel();
 
         thread::spawn(move || {
-            let mut uploader_manager = UploaderManager::new(rx, config, SharingState::Local, app_sender);
+            let mut uploader_manager = UploaderManager::new(rx, config, SharingState::Off, app_sender);
             uploader_manager.run();
         });
 
@@ -52,10 +53,15 @@ impl IncomingUploader {
             sender: sx,
         };
     }
+
+    pub fn set_my_sharing_state(&self, sharing_state: SharingState) {
+        self.sender.send(MessageUploadManager::SharingStateMsg(sharing_state)).unwrap();
+    }
 }
 
 
 struct UploaderManager {
+    stop_incoming: bool,
     receiver: Receiver<MessageUploadManager>,
     config: Config,
     sharing_state: SharingState,
@@ -75,6 +81,7 @@ impl UploaderManager {
         let single_uploaders = Vec::new();
 
         return UploaderManager {
+            stop_incoming: false,
             receiver: receiver,
             config,
             sharing_state,
@@ -88,6 +95,8 @@ impl UploaderManager {
 
         let mut ip_address;
         loop {
+            self.stop_incoming = false;
+            self.read_receiver();
 
             match self.sharing_state {
                 SharingState::Off => {
@@ -115,7 +124,11 @@ impl UploaderManager {
             }
 
             for stream in listener.incoming() {
-                let stream = match stream {
+                self.read_receiver();
+                if self.stop_incoming {
+                    break;
+                }
+                match stream {
                     Ok(stream) => {
                         let (sx, rx): (
                             Sender<MessageSingleUploader>,
@@ -128,7 +141,6 @@ impl UploaderManager {
                             let mut single_uploader = SingleUploader::new(rx, single_config, app_sender_clone);
                             single_uploader.run(stream);
                         });
-
                     },
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(time::Duration::from_secs(1));
@@ -141,18 +153,40 @@ impl UploaderManager {
                         continue;
                     }
                 };
-
-
             }
-            
-
         }
     }
 
+    fn read_receiver(&mut self) {
+        loop {
+            match self.receiver.try_recv() {
+                Ok(msg) => {
+                    match msg {
+                        MessageUploadManager::SharingStateMsg(state) => {
+                            self.sharing_state = state;
+                            self.reset_connections();
+                        },
+                    }
+                },
+                Err(e) => match e {
+                    mpsc::TryRecvError::Empty => return,
+                    mpsc::TryRecvError::Disconnected => return, // TODO log. When would this happen?
+                },
+            }
+        }
+    }
+
+    fn reset_connections(&mut self) {
+        self.stop_incoming = true;
+        for s in &self.single_uploaders {
+            s.send(MessageSingleUploader::ShutdownConn);
+        }
+        self.single_uploaders.clear();
+    }
 }
 
 enum MessageSingleUploader {
-
+    ShutdownConn,
 }
 
 struct SingleUploader {
@@ -160,6 +194,7 @@ struct SingleUploader {
     config: Config,
     nickname: String,
     app_sender: Sender<AppAggMessage>,
+    should_shutdown: bool,
 }
 
 impl SingleUploader {
@@ -172,6 +207,7 @@ impl SingleUploader {
             config,
             nickname,
             app_sender,
+            should_shutdown: false,
         }
     }
 
@@ -205,6 +241,8 @@ impl SingleUploader {
             },
         };
 
+        self.nickname = shared_user.nickname.clone();
+
         if !shared_user.allowed {
             // TODO log
             self.shutdown(stream);
@@ -233,6 +271,10 @@ impl SingleUploader {
         let everything_file_json_bytes = everything_file_json.as_bytes().to_vec();
  
         loop {
+            self.read_receiver();
+            if self.should_shutdown {
+                break;
+            }
             match self.run_loop(&mut encrypted_stream, &everything_file, &everything_file_json_bytes) {
                 Ok(_) => {},
                 Err(e) => {
@@ -241,7 +283,8 @@ impl SingleUploader {
                 },
             }
         }
-
+        
+        // TODO update Downloading From Me State - Disconnected? Remove from list entirely?
         // TODO shutdown encrypted stream
 
 
@@ -250,6 +293,11 @@ impl SingleUploader {
     fn run_loop(&mut self, encrypted_stream: &mut EncryptedStream, everything_file: &SharedFile, everything_file_json_bytes: &Vec<u8>) -> Result<(), Box<dyn Error>> {
 
         encrypted_stream.read()?;
+
+        self.read_receiver();
+        if self.should_shutdown {
+            return Ok(());
+        }
 
         let client_message = encrypted_stream.get_message()?;
         println!("{:?}", client_message);
@@ -276,6 +324,11 @@ impl SingleUploader {
                         println!("{:?}", e);
                         return Err(e);
                     },
+                }
+
+                self.read_receiver();
+                if self.should_shutdown {
+                    return Ok(());
                 }
 
                 if msg == MSG_FILE_LIST_FINAL {
@@ -338,10 +391,17 @@ impl SingleUploader {
 
             println!("Start sending file");
 
+            // TODO change to a "Download Starting/Connecting..."
+            self.app_sender.send(AppAggMessage::UploadStateChange(SingleUploadState{
+                nickname: self.nickname.clone(),
+                path: client_file_choice.to_string(),
+                percent: 0,
+            })).unwrap();
+
             let mut read_response = 1; // TODO combine with loop?
             let mut read_buffer = [0; MAX_DATA_SIZE];
             let mut current_sent_bytes: usize = file_seek_point as usize;
-            let mut download_percent: f64;
+            let mut download_percent: u64;
             let file_size_f64: f64 = client_shared_file.file_size as f64;
             while read_response != 0 {
                 read_response = f.read(&mut read_buffer).unwrap();
@@ -355,12 +415,26 @@ impl SingleUploader {
                 }
 
                 current_sent_bytes += read_response;
-                download_percent = ((current_sent_bytes as f64) / file_size_f64) * (100 as f64);
+                download_percent = (((current_sent_bytes as f64) / file_size_f64) * (100 as f64)) as u64;
                 println!("{}", download_percent);
-                // TODO update download percent
-                // Check if should reset
+                
+                self.app_sender.send(AppAggMessage::UploadStateChange(SingleUploadState{
+                    nickname: self.nickname.clone(),
+                    path: client_file_choice.to_string(),
+                    percent: if download_percent < 100 {download_percent} else {99}, // 100 will be sent outside this loop
+                })).unwrap();
+
+                self.read_receiver();
+                if self.should_shutdown {
+                    return Ok(());
+                }
             }
 
+            self.app_sender.send(AppAggMessage::UploadStateChange(SingleUploadState{
+                nickname: self.nickname.clone(),
+                path: client_file_choice.to_string(),
+                percent: 100,
+            })).unwrap();
             
             // Finished sending file
             println!("Send message finished");
@@ -372,8 +446,6 @@ impl SingleUploader {
                 },
             }
             println!("File transfer complete");
-            // TODO update is downloading = false
-            // TODO update finished downloads list
 
         } else {
             return Err(format!("Invalid client selection {}", client_message.to_string()))?;
@@ -384,13 +456,17 @@ impl SingleUploader {
     }
 
     fn read_receiver(&mut self) {
-        match self.receiver.try_recv() {
-            Ok(value) => match value {
-
-            }
-            Err(e) => match e {
-                mpsc::TryRecvError::Empty => return,
-                mpsc::TryRecvError::Disconnected => return,  // TODO log. When would this happen?
+        loop {
+            match self.receiver.try_recv() {
+                Ok(value) => match value {
+                    MessageSingleUploader::ShutdownConn => {
+                        self.should_shutdown = true;
+                    },
+                }
+                Err(e) => match e {
+                    mpsc::TryRecvError::Empty => return,
+                    mpsc::TryRecvError::Disconnected => return,  // TODO log. When would this happen?
+                }
             }
         }
     }

@@ -4,7 +4,7 @@ use std::sync::{mpsc, RwLock, Arc};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
-use crate::transmitic_core::SingleDownloadState;
+use crate::transmitic_core::{SingleDownloadState, SingleUploadState};
 
 
 struct DownloadStatus {
@@ -46,6 +46,7 @@ pub enum AppAggMessage {
     InProgress(InProgressMessage),
     Completed(CompletedMessage),
     Offline(OfflineMessage),
+    UploadStateChange(SingleUploadState),
 }
 
 // TODO clean up file
@@ -64,11 +65,11 @@ impl AppAggregator {
 
     }
 
-    pub fn start(&self, downlaod_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>) -> Sender<AppAggMessage>{
+    pub fn start(&self, downlaod_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>, upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>) -> Sender<AppAggMessage>{
         let (sender, receiver): (Sender<AppAggMessage>, Receiver<AppAggMessage>) = mpsc::channel();
 
         thread::spawn(move || {
-            app_loop(receiver, downlaod_state);
+            app_loop(receiver, downlaod_state, upload_state);
         });
 
         return sender;
@@ -76,7 +77,7 @@ impl AppAggregator {
 
 }
 
-fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>) {
+fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>, upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>) {
     loop {
         let msg = match receiver.recv() {
             Ok(msg) => msg,
@@ -152,6 +153,10 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
                         l.insert(f.nickname, s);
                     },
                 }
+            },
+            AppAggMessage::UploadStateChange(f) => {
+                let mut l = upload_state.write().unwrap();
+                l.insert(f.nickname.clone(), f);
             },
         }
     }
