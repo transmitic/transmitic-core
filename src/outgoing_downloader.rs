@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf}, collections::{VecDeque, HashMap}, ops::Index, net::{SocketAddr, TcpStream, Shutdown}, io::{Write, Read, SeekFrom, Seek}, convert::TryInto,
 };
 
-use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload, RefreshData}, utils::get_file_by_path, encrypted_stream::{self, EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}, app_aggregator::{AppAggMessage, InvalidFileMessage, InProgressMessage, CompletedMessage, OfflineMessage}};
+use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload, RefreshData}, utils::get_file_by_path, encrypted_stream::{self, EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}, app_aggregator::{AppAggMessage, InvalidFileMessage, InProgressMessage, CompletedMessage, OfflineMessage}, config};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -30,7 +30,7 @@ pub struct OutgoingDownloader {
 impl OutgoingDownloader {
     pub fn new(config: Config, app_sender: Sender<AppAggMessage>) -> Result<OutgoingDownloader, Box<dyn Error>> {
         create_downloads_dir()?;
-        let path_dir_downloads = get_path_dir_downloads()?;
+        let path_dir_downloads = config::get_path_dir_downloads()?;
         let channel_map= HashMap::new();
 
         return Ok(OutgoingDownloader {
@@ -181,21 +181,15 @@ impl OutgoingDownloader {
 }
 
 fn create_downloads_dir() -> Result<(), std::io::Error> {
-    let path = get_path_dir_downloads()?;
+    let path = config::get_path_dir_downloads()?;
     println!("download directory: {:?}", path);
     fs::create_dir_all(path)?;
     return Ok(());
 }
 
-fn get_path_dir_downloads() -> Result<PathBuf, std::io::Error> {
-    let mut path = env::current_exe()?;
-    path.pop();
-    path.push("Transmitic Downloads");
-    return Ok(path);
-}
 
 fn get_path_downloads_dir_user(user: &String)  -> Result<PathBuf, std::io::Error> {
-    let mut path = get_path_dir_downloads()?;
+    let mut path = config::get_path_dir_downloads()?;
     path.push(user);
     return Ok(path);
 }

@@ -299,6 +299,13 @@ fn get_path_transmitic_config_dir() -> Result<PathBuf, std::io::Error> {
     return Ok(path);
 }
 
+pub fn get_path_dir_downloads() -> Result<PathBuf, std::io::Error> {
+    let mut path = env::current_exe()?;
+    path.pop();
+    path.push("Transmitic Downloads");
+    return Ok(path);
+}
+
 fn init_config() -> Result<bool, Box<dyn Error>> {
     let config_path = get_path_config_json()?;
     println!("config path: {:?}", config_path);

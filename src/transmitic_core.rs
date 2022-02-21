@@ -1,4 +1,4 @@
-use std::{error::Error, net::{SocketAddr, Incoming}, sync::{Arc, Mutex, RwLock, mpsc::Sender}, thread, collections::{HashMap, VecDeque}, hash::Hash};
+use std::{error::Error, net::{SocketAddr, Incoming}, sync::{Arc, Mutex, RwLock, mpsc::Sender}, thread, collections::{HashMap, VecDeque}, hash::Hash, path::PathBuf};
 
 extern crate x25519_dalek;
 use aes_gcm::aead::heapless::spsc::SingleCore;
@@ -175,6 +175,20 @@ impl TransmiticCore {
         return Ok(());
     }
 
+    pub fn downloads_clear_finished(&mut self) {
+        let mut lock = self.download_state.write().unwrap();
+        for v in lock.values_mut() {
+            v.completed_downloads.clear();
+        }
+    }
+
+    pub fn downloads_clear_invalid(&mut self) {
+        let mut lock = self.download_state.write().unwrap();
+        for v in lock.values_mut() {
+            v.invalid_downloads.clear();
+        }
+    }
+
     pub fn download_selected(&mut self, downloads: Vec<SelectedDownload>) -> Result<(), Box<dyn Error>> {
         self.outgoing_downloader.download_selected(downloads)?;
         return Ok(());
@@ -257,6 +271,10 @@ impl TransmiticCore {
         self.config.update_user(nickname, new_public_id, new_ip, new_port)?;
 
         return Ok(());
+    }
+
+    pub fn get_downloads_dir(&self) -> Result<PathBuf, std::io::Error>  {
+        return config::get_path_dir_downloads();
     }
 
 }
