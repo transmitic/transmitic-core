@@ -175,6 +175,10 @@ impl TransmiticCore {
         return Ok(());
     }
 
+    pub fn downloads_cancel_all(&mut self) {
+        self.outgoing_downloader.downloads_cancel_all();
+    }
+
     pub fn downloads_clear_finished(&mut self) {
         let mut lock = self.download_state.write().unwrap();
         for v in lock.values_mut() {

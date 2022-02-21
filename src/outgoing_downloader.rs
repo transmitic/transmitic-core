@@ -75,6 +75,12 @@ impl OutgoingDownloader {
         }
     }
 
+    pub fn downloads_cancel_all(&mut self) {
+        for sender in self.channel_map.values_mut() {
+            sender.send(MessageSingleDownloader::CancelAllDownloads);
+        }
+    }
+
     pub fn download_selected(&mut self, downloads: Vec<SelectedDownload>) -> Result<(), Box<dyn Error>> {
 
         for download in downloads {
@@ -201,6 +207,7 @@ enum MessageSingleDownloader {
         shared_user: SharedUser,
     },
     NewDownload(String),
+    CancelAllDownloads,
     CancelDownload(String),
     PauseDownloads,
     ResumeDownloads,
@@ -216,7 +223,7 @@ struct SingleDownloader {
     is_downloading_paused: bool,
     stop_downloading: bool,
     app_sender: Sender<AppAggMessage>,
-    active_download_path: String,
+    active_download_path: Option<String>,
     active_download_size: u64,
     active_downloaded_current_bytes: u64,
 }
@@ -246,7 +253,7 @@ impl SingleDownloader {
             is_downloading_paused: false,
             stop_downloading: false,
             app_sender,
-            active_download_path: String::from(""),
+            active_download_path: None,
             active_download_size: 0,
             active_downloaded_current_bytes: 0,
         };
@@ -265,6 +272,8 @@ impl SingleDownloader {
             self.read_receiver();
 
             self.stop_downloading = false;
+
+            self.app_update_in_progress();
 
             if self.is_downloading_paused {
                 thread::sleep(time::Duration::from_secs(1));
@@ -350,7 +359,7 @@ impl SingleDownloader {
                     }
                 };
 
-                self.active_download_path = path_active_download;
+                self.active_download_path = Some(path_active_download.clone());
                 self.active_download_size = shared_file.file_size;
                 self.active_downloaded_current_bytes = 0;
                 self.app_update_in_progress();
@@ -362,7 +371,7 @@ impl SingleDownloader {
                 // Can't add pop in download_shared_file() since that's recursive
                 self.download_queue.pop_front();
                 self.write_queue();
-                self.app_update_completed(&self.active_download_path);
+                self.app_update_completed(&path_active_download);
                 
                 // TODO
                 self.read_receiver();
@@ -512,6 +521,12 @@ impl SingleDownloader {
                     MessageSingleDownloader::ResumeDownloads => {
                         self.is_downloading_paused = false;
                     }
+                    MessageSingleDownloader::CancelAllDownloads => {
+                        self.download_queue.clear();
+                        self.active_download_path = None;
+                        self.stop_downloading = true;
+                        self.write_queue();
+                    },
                 },
                 Err(e) => match e {
                     mpsc::TryRecvError::Empty => return,
@@ -559,7 +574,11 @@ impl SingleDownloader {
 
     fn get_queue_without_active(&self) -> VecDeque<String> {
         let mut queue = self.download_queue.clone();
-        queue.retain(|f| f != &self.active_download_path);
+        match &self.active_download_path {
+            Some(path) => queue.retain(|f| f != path),
+            None => {},
+        }
+        
         return queue;
     }
 
