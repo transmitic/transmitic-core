@@ -24,7 +24,8 @@ pub struct OutgoingDownloader {
     config: Config,
     path_dir_downloads: PathBuf,
     channel_map: HashMap<String, Sender<MessageSingleDownloader>>,
-    app_sender: Sender<AppAggMessage>
+    app_sender: Sender<AppAggMessage>,
+    is_downloading_paused: bool,
 }
 
 impl OutgoingDownloader {
@@ -38,7 +39,12 @@ impl OutgoingDownloader {
             path_dir_downloads,
             channel_map,
             app_sender,
+            is_downloading_paused: false,
         });
+    }
+
+    pub fn is_downloading_paused(&self) -> bool {
+        return self.is_downloading_paused;
     }
 
     pub fn start_downloading(&mut self) {
@@ -61,11 +67,13 @@ impl OutgoingDownloader {
 
         let app_sender_clone = self.app_sender.clone();
 
+        let is_downloading_paused = self.is_downloading_paused.clone();
+
         if path_queue_file.exists() {
             self.channel_map.insert(user.nickname.clone(), sx);
             thread::spawn(move || {
                 let mut downloader =
-                    SingleDownloader::new(rx, private_id_bytes, user.clone(), path_queue_file, app_sender_clone);
+                    SingleDownloader::new(rx, private_id_bytes, user.clone(), path_queue_file, app_sender_clone, is_downloading_paused,);
                 downloader.run();
                 println!(
                     "single downloader thread final exit {}",
@@ -75,9 +83,24 @@ impl OutgoingDownloader {
         }
     }
 
+    // TODO function to send message to all channels
     pub fn downloads_cancel_all(&mut self) {
         for sender in self.channel_map.values_mut() {
             sender.send(MessageSingleDownloader::CancelAllDownloads);
+        }
+    }
+
+    pub fn downloads_pause_all(&mut self) {
+        self.is_downloading_paused = true;
+        for sender in self.channel_map.values_mut() {
+            sender.send(MessageSingleDownloader::PauseDownloads);
+        }
+    }
+
+    pub fn downloads_resume_all(&mut self) {
+        self.is_downloading_paused = false;
+        for sender in self.channel_map.values_mut() {
+            sender.send(MessageSingleDownloader::ResumeDownloads);
         }
     }
 
@@ -110,7 +133,7 @@ impl OutgoingDownloader {
                                     self.start_downloading_single_user(user);
                                     break;
                                 }
-                            }                            
+                            }
                         },
                         Err(_) => {
                             // TODO
@@ -235,6 +258,7 @@ impl SingleDownloader {
         shared_user: SharedUser,
         path_queue_file: PathBuf,
         app_sender: Sender<AppAggMessage>,
+        is_downloading_paused: bool,
     ) -> SingleDownloader {
 
         // TODO function
@@ -250,7 +274,7 @@ impl SingleDownloader {
             shared_user,
             path_queue_file,
             download_queue,
-            is_downloading_paused: false,
+            is_downloading_paused: is_downloading_paused,
             stop_downloading: false,
             app_sender,
             active_download_path: None,
@@ -269,9 +293,9 @@ impl SingleDownloader {
         root_download_dir.push_str("/");
 
         while true {
-            self.read_receiver();
-
             self.stop_downloading = false;
+
+            self.read_receiver();
 
             self.app_update_in_progress();
 
@@ -369,6 +393,7 @@ impl SingleDownloader {
 
                 // TODO what if the download failed? don't pop
                 // Can't add pop in download_shared_file() since that's recursive
+                // TODO Pausing all Downloads causes inprogress to get added to completed
                 self.download_queue.pop_front();
                 self.write_queue();
                 self.app_update_completed(&path_active_download);
@@ -407,7 +432,7 @@ impl SingleDownloader {
                     return;
                 }
             }
-            
+
         } else {
             // Create directory for file download
             fs::create_dir_all(&download_dir).unwrap();

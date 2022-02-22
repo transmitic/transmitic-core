@@ -179,6 +179,14 @@ impl TransmiticCore {
         self.outgoing_downloader.downloads_cancel_all();
     }
 
+    pub fn downloads_resume_all(&mut self) {
+        self.outgoing_downloader.downloads_resume_all();
+    }
+
+    pub fn downloads_pause_all(&mut self) {
+        self.outgoing_downloader.downloads_pause_all();
+    }
+
     pub fn downloads_clear_finished(&mut self) {
         let mut lock = self.download_state.write().unwrap();
         for v in lock.values_mut() {
@@ -196,6 +204,10 @@ impl TransmiticCore {
     pub fn download_selected(&mut self, downloads: Vec<SelectedDownload>) -> Result<(), Box<dyn Error>> {
         self.outgoing_downloader.download_selected(downloads)?;
         return Ok(());
+    }
+
+    pub fn is_downloading_paused(&self) -> bool {
+        return self.outgoing_downloader.is_downloading_paused();
     }
 
     pub fn set_port(&mut self, port: String) -> Result<(), Box<dyn Error>> {
