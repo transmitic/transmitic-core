@@ -116,7 +116,9 @@ impl SingleDownloadState {
     }
 }
 
-// TODO inconsistent naming: active download VS in progress
+// TODO inconsistent naming: 
+//  active download VS in progress
+//  owner vs nickname
 impl TransmiticCore {
 
     pub fn new() -> Result<TransmiticCore, Box<dyn Error>> {
@@ -177,6 +179,10 @@ impl TransmiticCore {
 
     pub fn downloads_cancel_all(&mut self) {
         self.outgoing_downloader.downloads_cancel_all();
+    }
+
+    pub fn downloads_cancel_single(&mut self, nickname: String, file_path: String) {
+        self.outgoing_downloader.downloads_cancel_single(nickname, file_path);
     }
 
     pub fn downloads_resume_all(&mut self) {

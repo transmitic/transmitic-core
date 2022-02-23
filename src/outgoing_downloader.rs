@@ -90,6 +90,17 @@ impl OutgoingDownloader {
         }
     }
 
+    pub fn downloads_cancel_single(&mut self, nickname: String, file_path: String) {
+        match self.channel_map.get_mut(&nickname) {
+            Some(channel) => {
+                channel.send(MessageSingleDownloader::CancelDownload(file_path));
+            },
+            None => {
+                // Downloader already gone so there is nothing cancel
+            },
+        }
+    }
+
     pub fn downloads_pause_all(&mut self) {
         self.is_downloading_paused = true;
         for sender in self.channel_map.values_mut() {
@@ -293,9 +304,9 @@ impl SingleDownloader {
         root_download_dir.push_str("/");
 
         while true {
-            self.stop_downloading = false;
-
             self.read_receiver();
+
+            self.stop_downloading = false;  // Must come after read_receiver
 
             self.app_update_in_progress();
 
@@ -308,6 +319,8 @@ impl SingleDownloader {
                 thread::sleep(time::Duration::from_secs(1));
                 continue;
             }
+
+
 
             // TODO add backoff
 
@@ -394,9 +407,14 @@ impl SingleDownloader {
                 // TODO what if the download failed? don't pop
                 // Can't add pop in download_shared_file() since that's recursive
                 // TODO Pausing all Downloads causes inprogress to get added to completed
-                self.download_queue.pop_front();
-                self.write_queue();
-                self.app_update_completed(&path_active_download);
+                
+                // Download was _not_ interrupted, therefore it completed
+                if  !self.stop_downloading {
+                    self.download_queue.pop_front();
+                    self.write_queue();
+                    self.app_update_completed(&path_active_download);
+                }
+
                 
                 // TODO
                 self.read_receiver();
@@ -536,6 +554,9 @@ impl SingleDownloader {
                     },
                     MessageSingleDownloader::CancelDownload(s) => {
                         self.download_queue.retain(|f| f != &s);
+                        if self.active_download_path == Some(s) {
+                            self.active_download_path = None;
+                        }
                         self.stop_downloading = true;
                         self.write_queue();
                     },
