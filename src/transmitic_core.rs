@@ -96,6 +96,7 @@ pub struct SingleUploadState {
 pub struct SingleDownloadState {
     pub active_download_path: Option<String>,
     pub active_download_percent: u64,
+    pub active_download_local_path: Option<String>,
     pub download_queue: VecDeque<String>,
     pub invalid_downloads: Vec<String>,
     pub completed_downloads: Vec<String>,
@@ -108,6 +109,7 @@ impl SingleDownloadState {
         return SingleDownloadState {
             active_download_path: None,
             active_download_percent: 0,
+            active_download_local_path: None,
             download_queue: VecDeque::new(),
             invalid_downloads: Vec::new(),
             completed_downloads: Vec::new(),

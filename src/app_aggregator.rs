@@ -27,12 +27,14 @@ pub struct InProgressMessage {
     pub path: Option<String>,
     pub percent: u64,
     pub download_queue: VecDeque<String>, 
+    pub path_local_disk: Option<String>,
 }
 
 pub struct CompletedMessage {
     pub nickname: String,
     pub path: String,
     pub download_queue: VecDeque<String>,
+    pub path_local_disk: Option<String>,
 }
 
 pub struct OfflineMessage {
@@ -109,12 +111,14 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
                     Some(h) => {
                         h.active_download_path = f.path;
                         h.active_download_percent = f.percent;
+                        h.active_download_local_path = f.path_local_disk;
                         h.download_queue = f.download_queue;
                         h.is_online = true;
                     },
                     None => {
                         let mut s = SingleDownloadState::new();
                         s.active_download_path = f.path;
+                        s.active_download_local_path = f.path_local_disk;
                         s.active_download_percent = f.percent;
                         s.download_queue = f.download_queue;
                         l.insert(f.nickname, s);
@@ -128,6 +132,7 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
                         h.completed_downloads.push(f.path);
                         h.download_queue = f.download_queue;
                         h.active_download_path = None;
+                        h.active_download_local_path = f.path_local_disk;
                         h.is_online = true;
                     },
                     None => {

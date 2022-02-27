@@ -260,6 +260,7 @@ struct SingleDownloader {
     active_download_path: Option<String>,
     active_download_size: u64,
     active_downloaded_current_bytes: u64,
+    active_download_local_path: Option<String>,
 }
 
 impl SingleDownloader {
@@ -291,6 +292,7 @@ impl SingleDownloader {
             active_download_path: None,
             active_download_size: 0,
             active_downloaded_current_bytes: 0,
+            active_download_local_path: None,
         };
     }
 
@@ -399,6 +401,14 @@ impl SingleDownloader {
                 self.active_download_path = Some(path_active_download.clone());
                 self.active_download_size = shared_file.file_size;
                 self.active_downloaded_current_bytes = 0;
+
+                let current_path_obj = Path::new(&shared_file.path);
+                let current_path_name = current_path_obj.file_name().unwrap().to_str().unwrap();
+                let mut destination_path = root_download_dir.clone();
+                destination_path.push_str(current_path_name);
+                println!("OTD Destination: {}", destination_path);
+                self.active_download_local_path = Some(destination_path);
+
                 self.app_update_in_progress();
 
                 // TODO what if directory subfile becomes invalid mid download?
@@ -407,12 +417,12 @@ impl SingleDownloader {
                 // TODO what if the download failed? don't pop
                 // Can't add pop in download_shared_file() since that's recursive
                 // TODO Pausing all Downloads causes inprogress to get added to completed
-                
+
                 // Download was _not_ interrupted, therefore it completed
                 if  !self.stop_downloading {
                     self.download_queue.pop_front();
                     self.write_queue();
-                    self.app_update_completed(&path_active_download);
+                    self.app_update_completed(&path_active_download, &self.active_download_local_path);
                 }
 
                 
@@ -596,15 +606,17 @@ impl SingleDownloader {
             path: self.active_download_path.clone(),
             percent: ((self.active_downloaded_current_bytes as f64 / self.active_download_size as f64) * (100 as f64)) as u64,
             download_queue: self.get_queue_without_active(),
+            path_local_disk: self.active_download_local_path.clone(),
         };
         self.app_sender.send(AppAggMessage::InProgress(i)).unwrap();
     }
 
-    fn app_update_completed(&self, path: &String) {
+    fn app_update_completed(&self, path: &String, path_local_disk: &Option<String>) {
         let i = CompletedMessage {
             nickname: self.shared_user.nickname.clone(),
             path: path.clone(),
             download_queue: self.get_queue_without_active(),
+            path_local_disk: path_local_disk.clone(),
         };
         self.app_sender.send(AppAggMessage::Completed(i)).unwrap();
     }
