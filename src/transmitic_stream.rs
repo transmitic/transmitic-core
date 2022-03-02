@@ -37,11 +37,8 @@ impl TransmiticStream {
     pub fn connect(&mut self) -> Result<EncryptedStream, Box<dyn Error>> {
         self.send_transmitic_header()?;
         self.receive_transmitic_header()?;
-        println!("PRE SEND DIFFIE");
         let local_diffie_secret = self.send_diffie_helman_key()?;
-        println!("PRE REC DIFFIE");
         let remote_diffie_key = self.receive_diffie_helman_key()?;
-        println!("DIFFIE REC");
         let encryption_key = self.get_encryption_key(local_diffie_secret, remote_diffie_key);
         let encrypted_stream = self.get_encrypted_stream(encryption_key)?;
         return Ok(encrypted_stream);
@@ -50,22 +47,16 @@ impl TransmiticStream {
     pub fn wait_for_incoming(&mut self) -> Result<EncryptedStream, Box<dyn Error>> {
         self.receive_transmitic_header()?;
         self.send_transmitic_header()?;
-        println!("W PRE REC DIFFIE");
         let remote_diffie_key = self.receive_diffie_helman_key()?;
-        println!("W PRE SEND DIFFIE");
         let local_diffie_secret = self.send_diffie_helman_key()?;
-        println!("W send diffie com");
         let encryption_key = self.get_encryption_key(local_diffie_secret, remote_diffie_key);
-        println!("encc key created");
         let encrypted_stream = self.get_encrypted_stream(encryption_key)?;
         return Ok(encrypted_stream);
     }
 
     fn get_encrypted_stream(&self, encryption_key: [u8; 32]) -> Result<EncryptedStream, Box<dyn Error>> {
         // TODO can i shutdown the original stream?
-        println!("pre clone stream");
         let cloned_stream = self.stream.try_clone()?;
-        println!("post clone stream");
         let encrypted_stream = EncryptedStream::new(cloned_stream, encryption_key);
         return Ok(encrypted_stream);
     }
@@ -144,16 +135,13 @@ impl TransmiticStream {
         let local_diffie_secret = EphemeralSecret::new(OsRng);
         let local_diffie_public = PublicKey::from(&local_diffie_secret);
         let local_diffie_public_bytes: &[u8; 32] = local_diffie_public.as_bytes();
-        println!("{}", local_diffie_public_bytes.len());
         let local_diffie_signature_public_bytes = self.private_key_pair.sign(local_diffie_public_bytes);
         let local_diffie_signed_public_bytes = local_diffie_signature_public_bytes.as_ref();
-        println!("{}", local_diffie_signed_public_bytes.len());
         // diffie public key + diffie public key signed
         const buffer_size: usize = 32 + 64;
         let mut buffer = [0; buffer_size];
         buffer[0..32].copy_from_slice(&local_diffie_public_bytes[0..32]);
         buffer[32..buffer_size].copy_from_slice(&local_diffie_signed_public_bytes[0..64]);
-        println!("{:?}", buffer);
 
         match self.stream.write_all(&buffer) {
             Ok(_) => {},
@@ -179,8 +167,6 @@ impl TransmiticStream {
         const buffer_size: usize = 32 + 64;
         let mut buffer: [u8; buffer_size] = [0; buffer_size];
         // TODO set read timeout
-        println!("prep rec diffie");
-        println!("{:?}", buffer);
         match self.stream.read_exact(&mut buffer) {
             Ok(_) => {},
             Err(e) => {
@@ -198,8 +184,6 @@ impl TransmiticStream {
                 }
             },
         }
-        println!("{:?}", buffer);
-        println!("{}", buffer.len());
         // Get diffie bytes from buffer
         let mut remote_diffie_public_bytes: [u8; 32] = [0; 32];
         remote_diffie_public_bytes.copy_from_slice(&buffer[0..32]);

@@ -113,7 +113,6 @@ impl EncryptedStream {
         // TODO check payload size and err if too big?
 
         let message_bytes = &message.to_be_bytes();
-        println!("{:?}", message_bytes);
         self.buffer[..MSG_TYPE_SIZE].copy_from_slice(message_bytes);
 
         // Get size of payload

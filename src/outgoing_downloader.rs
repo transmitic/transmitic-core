@@ -208,7 +208,6 @@ impl OutgoingDownloader {
             }
         }
 
-        println!("{:?}", json_bytes);
         let files_str = std::str::from_utf8(&json_bytes)?;
         let mut everything_file: SharedFile = serde_json::from_str(&files_str)?;
 
@@ -222,7 +221,6 @@ impl OutgoingDownloader {
 
 fn create_downloads_dir() -> Result<(), std::io::Error> {
     let path = config::get_path_dir_downloads()?;
-    println!("download directory: {:?}", path);
     fs::create_dir_all(path)?;
     return Ok(());
 }
@@ -368,7 +366,6 @@ impl SingleDownloader {
                 }
             }
 
-            println!("{:?}", json_bytes);
             let files_str = std::str::from_utf8(&json_bytes).unwrap();
             let mut everything_file: SharedFile = serde_json::from_str(&files_str).unwrap();
 
@@ -385,7 +382,6 @@ impl SingleDownloader {
                     }
                 };
 
-                println!("{}", path_active_download);
 
                 // Check if file is valid
                 let shared_file = match get_file_by_path(&path_active_download, &everything_file) {
@@ -405,9 +401,11 @@ impl SingleDownloader {
                 let current_path_obj = Path::new(&shared_file.path);
                 let current_path_name = current_path_obj.file_name().unwrap().to_str().unwrap();
                 let mut destination_path = root_download_dir.clone();
-                destination_path.push_str(current_path_name);
-                println!("OTD Destination: {}", destination_path);
-                self.active_download_local_path = Some(destination_path);
+                if shared_file.is_directory {
+                    destination_path.push_str(current_path_name);
+                }
+                
+                self.active_download_local_path = Some(destination_path.clone());
 
                 self.app_update_in_progress();
 
@@ -422,7 +420,8 @@ impl SingleDownloader {
                 if  !self.stop_downloading {
                     self.download_queue.pop_front();
                     self.write_queue();
-                    self.app_update_completed(&path_active_download, &self.active_download_local_path);
+                    self.active_download_path = None;
+                    self.app_update_completed(&path_active_download, destination_path);
                 }
 
                 
@@ -469,7 +468,6 @@ impl SingleDownloader {
             println!("Saving to: {}", destination_path);
 
             // Send selection to server
-            println!("Sending selection to server");
             let selection_msg: u16;
             let selection_payload: Vec<u8>;
             let file_length: u64;
@@ -611,7 +609,7 @@ impl SingleDownloader {
         self.app_sender.send(AppAggMessage::InProgress(i)).unwrap();
     }
 
-    fn app_update_completed(&self, path: &String, path_local_disk: &Option<String>) {
+    fn app_update_completed(&self, path: &String, path_local_disk: String) {
         let i = CompletedMessage {
             nickname: self.shared_user.nickname.clone(),
             path: path.clone(),

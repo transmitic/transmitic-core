@@ -7,7 +7,7 @@ use ring::{
 };
 use serde::{Serialize, Deserialize};
 
-use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader, self}, incoming_uploader::{IncomingUploader, self, SharingState}, shared_file::{SelectedDownload, RefreshData}, app_aggregator::{AppAggregator, AppAggMessage}};
+use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader, self}, incoming_uploader::{IncomingUploader, self, SharingState}, shared_file::{SelectedDownload, RefreshData}, app_aggregator::{AppAggregator, AppAggMessage, CompletedMessage}};
 
 // TODO
 //  https://doc.rust-lang.org/std/sync/struct.BarrierWaitResult.html
@@ -93,13 +93,18 @@ pub struct SingleUploadState {
     pub percent: u64,
 }
 
+pub struct CompletedDownloadState {
+    pub path: String,
+    pub path_local_disk: String,
+}
+
 pub struct SingleDownloadState {
     pub active_download_path: Option<String>,
     pub active_download_percent: u64,
     pub active_download_local_path: Option<String>,
     pub download_queue: VecDeque<String>,
     pub invalid_downloads: Vec<String>,
-    pub completed_downloads: Vec<String>,
+    pub completed_downloads: Vec<CompletedMessage>,
     pub is_online: bool,
 }
 

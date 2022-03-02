@@ -300,8 +300,6 @@ impl SingleUploader {
         }
 
         let client_message = encrypted_stream.get_message()?;
-        println!("{:?}", client_message);
-        println!("{:?}", encrypted_stream.buffer);
 
         if client_message == MSG_FILE_LIST {
             println!("{:?}", everything_file_json_bytes);
@@ -357,7 +355,6 @@ impl SingleUploader {
             let client_shared_file = match get_file_by_path(client_file_choice, &everything_file) {
                 Some(file) =>  file,
                 None => {
-                    println!("    ! Invalid file choice");				
                     match encrypted_stream.write(MSG_FILE_INVALID_FILE, &Vec::with_capacity(1)) {
                         Ok(_) => {},
                         Err(e) => {
@@ -416,7 +413,6 @@ impl SingleUploader {
 
                 current_sent_bytes += read_response;
                 download_percent = (((current_sent_bytes as f64) / file_size_f64) * (100 as f64)) as u64;
-                println!("{}", download_percent);
                 
                 self.app_sender.send(AppAggMessage::UploadStateChange(SingleUploadState{
                     nickname: self.nickname.clone(),

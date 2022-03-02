@@ -77,14 +77,11 @@ impl Config {
             existing_paths.push(file.path.clone());
         }
         
-        //println!("{:?}", existing_paths);
         for mut file in files {
-            println!("{}", file);
             if file.starts_with("file://") {
                 file = file[7..].to_string();
             }
             file = file.replace("/", "\\");
-            println!("{}", file);
             // File already shared, don't readd it
             if existing_paths.contains(&file) {
                 continue;
@@ -287,7 +284,6 @@ impl Config {
 
 fn create_config_dir() -> Result<(), std::io::Error> {
     let path = get_path_transmitic_config_dir()?;
-    println!("config directory: {:?}", path);
     fs::create_dir_all(path)?;
     return Ok(());
 }
@@ -308,7 +304,6 @@ pub fn get_path_dir_downloads() -> Result<PathBuf, std::io::Error> {
 
 fn init_config() -> Result<bool, Box<dyn Error>> {
     let config_path = get_path_config_json()?;
-    println!("config path: {:?}", config_path);
 
     if !config_path.exists() {
         create_new_config()?;
