@@ -26,7 +26,7 @@ impl TransmiticStream {
         stream.set_nonblocking(false).unwrap();
 
         return TransmiticStream {
-            stream,
+            stream: stream,
             shared_user,
             private_key_pair,
             private_id_bytes,

@@ -1,11 +1,14 @@
 use core::time;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs::OpenOptions;
+use std::hash::Hash;
 use std::io::{Read, Write, SeekFrom, Seek};
 use std::net::{TcpListener, TcpStream, Shutdown};
+use std::panic::AssertUnwindSafe;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
-use std::thread;
+use std::{thread, panic};
 
 use serde::__private::de::TagContentOtherField;
 
@@ -78,7 +81,9 @@ impl UploaderManager {
     pub fn new(receiver: Receiver<MessageUploadManager>, config: Config, sharing_state: SharingState, app_sender: Sender<AppAggMessage>) -> UploaderManager {
 
         println!("starting uploader manager");
-        let single_uploaders = Vec::new();
+        // let single_uploaders = HashMap::with_capacity(10);
+
+        let single_uploaders = Vec::with_capacity(10);
 
         return UploaderManager {
             stop_incoming: false,
@@ -134,12 +139,46 @@ impl UploaderManager {
                             Sender<MessageSingleUploader>,
                             Receiver<MessageSingleUploader>,
                         ) = mpsc::channel();
+
+                        // let mut thread_id: Option<usize> = None;
+                        // for new_id in 0..usize::MAX {
+                        //     if self.single_uploaders.contains_key(&new_id) {
+                        //         continue;
+                        //     }
+                        //     thread_id = Some(new_id);
+                        //     break;
+                        // }
+                        // let thread_id = match thread_id {
+                        //     Some(thread_id) => thread_id,
+                        //     None => {
+                        //         // How did this actually happen? Every thread paniced and the user never performed and action to cause a cleanup
+                        //         //  Extremely long running session
+                        //         self.reset_connections();
+                        //         self.app_sender.send(AppAggMessage::AppFailedKill("Uploader map filled up".to_string()));
+                        //         panic!("Uploader map filled up");
+                        //     },
+                        // };
+                        // self.single_uploaders.insert(thread_id, sx);
+
+                        self.remove_dead_uploaders();
                         self.single_uploaders.push(sx);
+                        
                         let single_config = self.config.clone();
                         let app_sender_clone = self.app_sender.clone();
                         thread::spawn(move || {
-                            let mut single_uploader = SingleUploader::new(rx, single_config, app_sender_clone);
-                            single_uploader.run(stream);
+                            
+                            
+                                
+                            let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                                let mut single_uploader = SingleUploader::new(rx, single_config, app_sender_clone);
+                                single_uploader.run(&stream);
+                            }));
+
+                            stream.shutdown(Shutdown::Both);
+
+                            //app_sender_clone.send(MessageSingleUploader::ShutdownConn);
+
+                            
                         });
                     },
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -178,15 +217,57 @@ impl UploaderManager {
 
     fn reset_connections(&mut self) {
         self.stop_incoming = true;
-        for s in &self.single_uploaders {
-            s.send(MessageSingleUploader::ShutdownConn);
-        }
+        self.send_message_to_all_uploaders(MessageSingleUploader::ShutdownConn);
         self.single_uploaders.clear();
+    }
+
+    fn remove_dead_uploaders(&mut self) {
+        self.send_message_to_all_uploaders(MessageSingleUploader::DoNothing);
+    }
+
+    fn send_message_to_all_uploaders(&mut self, message: MessageSingleUploader) {
+        
+        // let mut remove_uploaders = Vec::new();
+        // for s in self.single_uploaders.iter_mut() {
+        //     match s.1.send(message.clone()) {
+        //         Ok(_) => {},
+        //         Err(_)=> {
+        //             remove_uploaders.push(s.0);
+        //         },
+        //     }
+        // }
+
+        // self.single_uploaders.ret
+        // for key in remove_uploaders {
+        //     &mut self.single_uploaders.remove(&key);
+        // }
+
+        // for s in &self.single_uploaders {
+        //     s.send(MessageSingleUploader::ShutdownConn);
+        // }
+
+        self.single_uploaders.retain(|uploader| {
+            let keep = {
+                match uploader.send(message.clone()) {
+                    Ok(_) => {
+                        println!("KEEP UPLOADER");
+                        true
+                    },
+                    Err(_) => {
+                        println!("REMOVE UPLOADER");
+                        false
+                    },
+                }
+            };
+            keep
+        });
     }
 }
 
+#[derive(Clone, Debug)]
 enum MessageSingleUploader {
     ShutdownConn,
+    DoNothing,
 }
 
 struct SingleUploader {
@@ -211,7 +292,7 @@ impl SingleUploader {
         }
     }
 
-    pub fn run(&mut self, stream: TcpStream) {
+    pub fn run(&mut self, stream: &TcpStream) {
         let client_connecting_addr = match stream.peer_addr() {
             Ok(client_connecting_addr) => client_connecting_addr,
             Err(e) => {
@@ -249,7 +330,7 @@ impl SingleUploader {
             return;
         }
 
-        let mut transmitic_stream = TransmiticStream::new(stream, shared_user.clone(), self.config.get_local_private_id_bytes());
+        let mut transmitic_stream = TransmiticStream::new(stream.try_clone().unwrap(), shared_user.clone(), self.config.get_local_private_id_bytes());
         let mut encrypted_stream = transmitic_stream.wait_for_incoming().unwrap();  // TODO remove unwrap
         println!("enc stream created");
 
@@ -458,6 +539,9 @@ impl SingleUploader {
                     MessageSingleUploader::ShutdownConn => {
                         self.should_shutdown = true;
                     },
+                    MessageSingleUploader::DoNothing => {
+                        // Don't do anything. Useful to reset the dead uploaders because the Sender fails
+                    },
                 }
                 Err(e) => match e {
                     mpsc::TryRecvError::Empty => return,
@@ -468,7 +552,7 @@ impl SingleUploader {
     }
 
     // TODO doesn't support EncryptedStream
-    fn shutdown(&mut self, stream: TcpStream) {
+    fn shutdown(&mut self, stream: &TcpStream) {
         match stream.shutdown(Shutdown::Both) {
             Ok(_) => {},
             Err(e) => {

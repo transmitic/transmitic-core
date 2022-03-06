@@ -3,7 +3,7 @@ use std::{
     env,
     error::Error,
     fs::{self, metadata, File, OpenOptions},
-    path::{Path, PathBuf}, collections::{VecDeque, HashMap}, ops::Index, net::{SocketAddr, TcpStream, Shutdown}, io::{Write, Read, SeekFrom, Seek}, convert::TryInto,
+    path::{Path, PathBuf}, collections::{VecDeque, HashMap}, ops::Index, net::{SocketAddr, TcpStream, Shutdown}, io::{Write, Read, SeekFrom, Seek}, convert::TryInto, panic::{self, AssertUnwindSafe},
 };
 
 use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload, RefreshData}, utils::get_file_by_path, encrypted_stream::{self, EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}, app_aggregator::{AppAggMessage, InvalidFileMessage, InProgressMessage, CompletedMessage, OfflineMessage}, config};
@@ -32,7 +32,7 @@ impl OutgoingDownloader {
     pub fn new(config: Config, app_sender: Sender<AppAggMessage>) -> Result<OutgoingDownloader, Box<dyn Error>> {
         create_downloads_dir()?;
         let path_dir_downloads = config::get_path_dir_downloads()?;
-        let channel_map= HashMap::new();
+        let channel_map= HashMap::with_capacity(10);
 
         return Ok(OutgoingDownloader {
             config,
@@ -72,22 +72,44 @@ impl OutgoingDownloader {
         if path_queue_file.exists() {
             self.channel_map.insert(user.nickname.clone(), sx);
             thread::spawn(move || {
-                let mut downloader =
-                    SingleDownloader::new(rx, private_id_bytes, user.clone(), path_queue_file, app_sender_clone, is_downloading_paused,);
-                downloader.run();
+                
+                // TODO how to handle unexpected panics, and queue files, and starting new ones, and race conditions etc
+                //  maybe each downloader cannot maintain its own queue file?
+                // Put this thread in a while loop? Check result?
+                //  if panic result is Ok, let it die
+                //      else, restart it? But is the sender or receiver dead?
+                let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                    let mut downloader =
+                        SingleDownloader::new(rx, private_id_bytes, user.clone(), path_queue_file, app_sender_clone, is_downloading_paused,);
+                    downloader.run();
+                }));
                 println!(
                     "single downloader thread final exit {}",
                     user.nickname.clone()
                 );  // TODO log
+
             });
+        }
+    }
+
+    fn send_message_to_all_downloads(&mut self, message: MessageSingleDownloader) {
+        let mut remove_keys: Vec<String> = Vec::new();
+
+        for (key, sender) in self.channel_map.iter_mut() {
+            match sender.send(message.clone()) {
+                Ok(_) => {},
+                Err(_) => remove_keys.push(key.to_string()),
+            }
+        }
+
+        for key in remove_keys {
+            self.channel_map.remove(&key);
         }
     }
 
     // TODO function to send message to all channels
     pub fn downloads_cancel_all(&mut self) {
-        for sender in self.channel_map.values_mut() {
-            sender.send(MessageSingleDownloader::CancelAllDownloads);
-        }
+        self.send_message_to_all_downloads(MessageSingleDownloader::CancelAllDownloads);
     }
 
     pub fn downloads_cancel_single(&mut self, nickname: String, file_path: String) {
@@ -103,16 +125,12 @@ impl OutgoingDownloader {
 
     pub fn downloads_pause_all(&mut self) {
         self.is_downloading_paused = true;
-        for sender in self.channel_map.values_mut() {
-            sender.send(MessageSingleDownloader::PauseDownloads);
-        }
+        self.send_message_to_all_downloads(MessageSingleDownloader::PauseDownloads);
     }
 
     pub fn downloads_resume_all(&mut self) {
         self.is_downloading_paused = false;
-        for sender in self.channel_map.values_mut() {
-            sender.send(MessageSingleDownloader::ResumeDownloads);
-        }
+        self.send_message_to_all_downloads(MessageSingleDownloader::ResumeDownloads);
     }
 
     pub fn download_selected(&mut self, downloads: Vec<SelectedDownload>) -> Result<(), Box<dyn Error>> {
@@ -188,6 +206,7 @@ impl OutgoingDownloader {
                 return Err(Box::new(e));
             }
         };
+
         
         let mut transmitic_stream = TransmiticStream::new(stream, shared_user.clone(), self.config.get_local_private_id_bytes());
         let mut encrypted_stream = transmitic_stream.connect()?; // TODO remove unwrap
@@ -232,6 +251,7 @@ fn get_path_downloads_dir_user(user: &String)  -> Result<PathBuf, std::io::Error
     return Ok(path);
 }
 
+#[derive(Clone, Debug)]
 // Single Downloader
 enum MessageSingleDownloader {
     NewConfig {
@@ -243,6 +263,7 @@ enum MessageSingleDownloader {
     CancelDownload(String),
     PauseDownloads,
     ResumeDownloads,
+    DoNothingDownloader,
 }
 
 struct SingleDownloader {
@@ -580,6 +601,9 @@ impl SingleDownloader {
                         self.active_download_path = None;
                         self.stop_downloading = true;
                         self.write_queue();
+                    },
+                    MessageSingleDownloader::DoNothingDownloader => {
+                        // Don't do anything. Useful to reset the dead downloaders because the Sender fails
                     },
                 },
                 Err(e) => match e {

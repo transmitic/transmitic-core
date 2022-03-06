@@ -50,6 +50,7 @@ pub enum AppAggMessage {
     Completed(CompletedMessage),
     Offline(OfflineMessage),
     UploadStateChange(SingleUploadState),
+    AppFailedKill(String), // TODO
 }
 
 // TODO clean up file
@@ -164,6 +165,7 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
                 let mut l = upload_state.write().unwrap();
                 l.insert(f.nickname.clone(), f);
             },
+            AppAggMessage::AppFailedKill(_) => todo!(),
         }
     }
 }
