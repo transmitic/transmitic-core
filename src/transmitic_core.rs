@@ -145,7 +145,7 @@ impl TransmiticCore {
         let mut app_agg = AppAggregator::new();
         let mut app_sender = app_agg.start(arc_clone, arc_upload_clone);
 
-        app_sender.send(AppAggMessage::StringLog("AppAgg started".to_string()))?;
+        app_sender.send(AppAggMessage::LogInfo("AppAgg started".to_string()))?;
 
         let mut outgoing_downloader = OutgoingDownloader::new(config.clone(), app_sender.clone())?;
         outgoing_downloader.start_downloading();

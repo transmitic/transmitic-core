@@ -68,9 +68,11 @@ impl EncryptedStream {
     pub fn read(&mut self) -> Result<(), Box<dyn Error>> {
         self._read_stream()?;
         let new_nonce = GenericArray::from_slice(&self.nonce[..]);
-        let plaintext = aes_gcm::aead::Aead::decrypt(&self
-            .cipher, new_nonce, self.crypto_buffer.as_ref())
-            .unwrap();
+        let plaintext = match aes_gcm::aead::Aead::decrypt(&self
+            .cipher, new_nonce, self.crypto_buffer.as_ref()) {
+                Ok(plaintext) => plaintext,
+                Err(e) => Err(format!("Encrypted Stream read failed to decrypt. {}", e.to_string()))?,
+            };
         let _ = &mut self.buffer.copy_from_slice(&plaintext[..TOTAL_BUFFER_SIZE]);
         self.increment_nonce()?;
         return Ok(());
@@ -84,9 +86,11 @@ impl EncryptedStream {
     pub fn write(&mut self, msg: u16, payload: &Vec<u8>) -> Result<(), Box<dyn Error>> {
         self.set_buffer(msg, payload);
         let new_nonce = GenericArray::from_slice(&self.nonce[..]);
-        let cipher_text = aes_gcm::aead::Aead::encrypt(&self
-            .cipher, new_nonce, self.buffer.as_ref())
-            .unwrap();
+        let cipher_text = match aes_gcm::aead::Aead::encrypt(&self
+            .cipher, new_nonce, self.buffer.as_ref()) {
+                Ok(cipher_text) => cipher_text,
+                Err(e) => Err(format!("Encrypted Stream write failed to encrypt. {}", e.to_string()))?,
+            };
 
         self._write_stream(&cipher_text[..])?;
         self.increment_nonce()?;
@@ -103,10 +107,10 @@ impl EncryptedStream {
         return Ok(u16::from_be_bytes(message_array));
     }
 
-    pub fn get_payload(&self) -> &[u8] {
-        let payload_size_bytes: u32 = u32::from_be_bytes(self.buffer[MSG_TYPE_SIZE..PAYLOAD_SIZE_LEN + MSG_TYPE_SIZE].try_into().unwrap());
+    pub fn get_payload(&self) -> Result<&[u8], Box<dyn Error>> {
+        let payload_size_bytes: u32 = u32::from_be_bytes(self.buffer[MSG_TYPE_SIZE..PAYLOAD_SIZE_LEN + MSG_TYPE_SIZE].try_into()?);
         let payload_size = payload_size_bytes as usize;
-        return &self.buffer[PAYLOAD_OFFSET..PAYLOAD_OFFSET + payload_size];
+        return Ok(&self.buffer[PAYLOAD_OFFSET..PAYLOAD_OFFSET + payload_size]);
     }
 
     fn set_buffer(&mut self, message: u16, payload: &Vec<u8>) {

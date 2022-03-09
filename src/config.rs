@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -60,12 +61,7 @@ impl Config {
         let first_start = init_config()?;
         let config_file = read_config()?;
         let path_dir_config = get_path_transmitic_config_dir()?;
-
-        // Load local private key pair
-        // TODO repeated in create_new_id and create new config?
         let local_private_key_bytes = crypto::get_bytes_from_base64_str(&config_file.my_private_id)?;
-        let local_key_pair =
-            signature::Ed25519KeyPair::from_pkcs8(local_private_key_bytes.as_ref()).unwrap(); // TODO
 
         return Ok(Config { first_start, config_file, local_private_key_bytes, path_dir_config, });
     }
@@ -153,19 +149,14 @@ impl Config {
     }
 
     pub fn create_new_id(&mut self) -> Result<(), Box<dyn Error>> {
-        let (private_id_bytes, _) = crypto::generate_id_pair().unwrap();
+        let (private_id_bytes, _) = crypto::generate_id_pair()?;
         let private_id_string = base64::encode(private_id_bytes);
         
         let mut new_config_file = self.config_file.clone();
         new_config_file.my_private_id = private_id_string;
         self.write_and_set_config(&mut new_config_file)?;
 
-        // TODO move this to write_and_set_config?
         let local_private_key_bytes = crypto::get_bytes_from_base64_str(&self.config_file.my_private_id)?;
-        // TODO
-        //let local_key_pair =
-        //    signature::Ed25519KeyPair::from_pkcs8(local_private_key_bytes.as_ref()).unwrap();
-        //self.local_key_pair = local_key_pair; // TODO
         self.local_private_key_bytes = local_private_key_bytes;
 
         return Ok(());
@@ -320,7 +311,7 @@ fn get_path_config_json() -> Result<PathBuf, std::io::Error> {
 }
 
 fn create_new_config() -> Result<(), Box<dyn Error>> {
-    let (private_id_bytes, _) = crypto::generate_id_pair().unwrap();
+    let (private_id_bytes, _) = crypto::generate_id_pair()?;
 
     let private_id_string = base64::encode(private_id_bytes);
 
@@ -399,10 +390,19 @@ fn verify_config_port(port: &String) -> Result<(), Box<dyn Error>> {
 }
 
 fn verify_config_my_private_id(my_private_id: &String) -> Result<(), Box<dyn Error>> {
-    match crypto::get_bytes_from_base64_str(my_private_id) {
-        Ok(_) => return Ok(()),
-        Err(e) => Err(format!("Invalid Private ID. {}", e.to_string()))?,
-    }
+    let local_private_key_bytes = match crypto::get_bytes_from_base64_str(my_private_id) {
+        Ok(local_private_key_bytes) => local_private_key_bytes,
+        Err(e) => Err(format!("Invalid Private ID. Not b64. {}", e.to_string()))?,
+    };
+
+    match signature::Ed25519KeyPair::from_pkcs8(local_private_key_bytes.as_ref()) {
+        Ok(key_pair) => key_pair,
+        Err(e) => {
+            Err(format!("Failed to load local key pair '{}'.", e.to_string()))?
+        },
+    };
+
+    return Ok(());
 }
 
 fn get_blocked_file_name_chars() -> String {
@@ -599,7 +599,7 @@ pub fn get_everything_file(config: &Config, nickname: &String) -> Result<SharedF
 
         let mut file_size: u64 = 0; // directory size calculated by all files
         if is_directory == false {
-            file_size = metadata(&path).unwrap().len();
+            file_size = metadata(&path)?.len();
         }
 
         let mut shared_file: SharedFile = SharedFile {
@@ -608,8 +608,11 @@ pub fn get_everything_file(config: &Config, nickname: &String) -> Result<SharedF
             files: Vec::new(),
             file_size,
         };
-        let config_dir = &config.get_path_dir_config().to_str().unwrap().to_string();
-        process_shared_file(&mut shared_file, config_dir);
+        let config_dir = match &config.get_path_dir_config().to_str() {
+            Some(config_dir) => config_dir.to_string(),
+            None => Err("Failed to convert config dir path to String")?,
+        };
+        process_shared_file(&mut shared_file, &config_dir)?;
         everything_file.file_size += shared_file.file_size;
         everything_file.files.push(shared_file);
     }
@@ -617,16 +620,20 @@ pub fn get_everything_file(config: &Config, nickname: &String) -> Result<SharedF
     return Ok(everything_file);
 }
 
-pub fn process_shared_file(shared_file: &mut SharedFile, config_dir: &String) {
+pub fn process_shared_file(shared_file: &mut SharedFile, config_dir: &String) -> Result<(), Box<dyn Error>> {
     if shared_file.is_directory == false {
-        return;
+        return Ok(());
     }
 
     if shared_file.is_directory {
-        for file in fs::read_dir(&shared_file.path).unwrap() {
-            let file = file.unwrap();
+        for file in fs::read_dir(&shared_file.path)? {
+            let file = file?;
             let path = file.path();
-            let path_string = String::from(path.to_str().unwrap());
+
+            let path_string = match path.to_str() {
+                Some(path_string) => String::from(path_string),
+                None => Err(format!("Failed to convert path string {:?}", path))?,
+            };
 
             if path_string.contains(config_dir) {
                 continue;
@@ -636,7 +643,7 @@ pub fn process_shared_file(shared_file: &mut SharedFile, config_dir: &String) {
 
             let mut file_size: u64 = 0; // directory size calculated by all files
             if is_directory == false {
-                file_size = metadata(&path_string).unwrap().len();
+                file_size = metadata(&path_string)?.len();
             }
             let mut new_shared_file = SharedFile {
                 path: path_string,
@@ -645,10 +652,12 @@ pub fn process_shared_file(shared_file: &mut SharedFile, config_dir: &String) {
                 file_size,
             };
             if is_directory {
-                process_shared_file(&mut new_shared_file, config_dir);
+                process_shared_file(&mut new_shared_file, config_dir)?;
             }
             shared_file.file_size += new_shared_file.file_size;
             shared_file.files.push(new_shared_file);
         }
     }
+
+    return Ok(());
 }

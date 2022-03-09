@@ -209,7 +209,7 @@ impl OutgoingDownloader {
 
         
         let mut transmitic_stream = TransmiticStream::new(stream, shared_user.clone(), self.config.get_local_private_id_bytes());
-        let mut encrypted_stream = transmitic_stream.connect()?; // TODO remove unwrap
+        let mut encrypted_stream = transmitic_stream.connect()?;
         
         // request file list
         let message: u16 = MSG_FILE_LIST;
@@ -220,7 +220,7 @@ impl OutgoingDownloader {
         loop {
             encrypted_stream.read()?;
             let client_message = encrypted_stream.get_message()?;
-            json_bytes.extend_from_slice(encrypted_stream.get_payload());
+            json_bytes.extend_from_slice(encrypted_stream.get_payload()?);
 
             if client_message == MSG_FILE_LIST_FINAL {
                 break;
@@ -315,16 +315,19 @@ impl SingleDownloader {
         };
     }
 
-    pub fn run(&mut self) {
-        self.app_sender.send(AppAggMessage::StringLog(format!("Start outgoing {}", self.shared_user.nickname))).unwrap();
+    // Ok -> An "expected" return. Eg Download finished
+    // Error -> An "unexpected" return. Eg bad file path
+    pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
+
+        self.app_sender.send(AppAggMessage::LogInfo(format!("Start downloading from '{}'", self.shared_user.nickname)))?;
         self.initialize_download_queue();
         self.app_update_offline();
 
-        let root_download_dir = get_path_downloads_dir_user(&self.shared_user.nickname).unwrap();
+        let root_download_dir = get_path_downloads_dir_user(&self.shared_user.nickname)?;
         let mut root_download_dir = root_download_dir.into_os_string().to_str().unwrap().to_string();
         root_download_dir.push_str("/");
 
-        while true {
+        loop {
             self.read_receiver();
 
             self.stop_downloading = false;  // Must come after read_receiver
@@ -340,8 +343,6 @@ impl SingleDownloader {
                 thread::sleep(time::Duration::from_secs(1));
                 continue;
             }
-
-
 
             // TODO add backoff
 
@@ -380,7 +381,7 @@ impl SingleDownloader {
             loop {
                 encrypted_stream.read().unwrap();
                 let client_message = encrypted_stream.get_message().unwrap();
-                json_bytes.extend_from_slice(encrypted_stream.get_payload());
+                json_bytes.extend_from_slice(encrypted_stream.get_payload().unwrap());
 
                 if client_message == MSG_FILE_LIST_FINAL {
                     break;
@@ -456,6 +457,8 @@ impl SingleDownloader {
             // TODO shutdown stream
 
         }
+
+        return Ok(());
     }
 
     fn download_shared_file(&mut self, encrypted_stream: &mut EncryptedStream, shared_file: &SharedFile, root_download_dir: &String, download_dir: &String) {
@@ -533,7 +536,7 @@ impl SingleDownloader {
             loop {
 
                 let mut payload_bytes: Vec<u8> = Vec::new();
-                payload_bytes.extend_from_slice(encrypted_stream.get_payload());
+                payload_bytes.extend_from_slice(encrypted_stream.get_payload().unwrap());
                 current_downloaded_bytes += payload_bytes.len();
                 self.active_downloaded_current_bytes += payload_bytes.len() as u64;
                 

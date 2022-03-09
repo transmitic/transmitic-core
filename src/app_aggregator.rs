@@ -44,7 +44,10 @@ pub struct OfflineMessage {
 }
 
 pub enum AppAggMessage {
-    StringLog(String),
+    LogDebug(String),
+    LogInfo(String),
+    LogWarning(String),
+    LogError(String),
     InvalidFile(InvalidFileMessage),
     InProgress(InProgressMessage),
     Completed(CompletedMessage),
@@ -90,7 +93,6 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
 
         match msg {
             // TODO clean up. Struct for download_state instead
-            AppAggMessage::StringLog(s) => println!("[LOG] {}", s),
             AppAggMessage::InvalidFile(f) => {
                 let mut l = download_state.write().unwrap();
                 match l.get_mut(&f.nickname) {
@@ -166,6 +168,10 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
                 l.insert(f.nickname.clone(), f);
             },
             AppAggMessage::AppFailedKill(_) => todo!(),
+            AppAggMessage::LogDebug(s) => println!("[DEBUG]] {}", s),
+            AppAggMessage::LogInfo(s) => println!("[INFO] {}", s),
+            AppAggMessage::LogWarning(s) => println!("[WARNING] {}", s),
+            AppAggMessage::LogError(s) => println!("[ERROR] {}", s),
         }
     }
 }
