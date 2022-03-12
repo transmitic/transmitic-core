@@ -41,7 +41,6 @@ pub struct IncomingUploader {
 impl IncomingUploader {
 
     pub fn new(config: Config, app_sender: Sender<AppAggMessage>) -> IncomingUploader {
-        println!("Starting incoming uploader");
         let (sx, rx): (
             Sender<MessageUploadManager>,
             Receiver<MessageUploadManager>,
@@ -71,10 +70,6 @@ struct UploaderManager {
     receiver: Receiver<MessageUploadManager>,
     config: Config,
     sharing_state: SharingState,
-    // TODO once a SingleUplaoder thread is dead, is the reciever dead, and thus can be removed from
-    // this vec on next interation? If not, SingleUploader needs to send a message back around.
-    // 1. Map usize to Senders. SingleUploader gets its ID. At shutdown send to AppAggreator to pop it
-    //  When adding a new one loop through usize until you find available int.
     single_uploaders: Vec<Sender<MessageSingleUploader>>,
     app_sender: Sender<AppAggMessage>,
 }
@@ -82,10 +77,6 @@ struct UploaderManager {
 impl UploaderManager {
 
     pub fn new(receiver: Receiver<MessageUploadManager>, config: Config, sharing_state: SharingState, app_sender: Sender<AppAggMessage>) -> UploaderManager {
-
-        println!("starting uploader manager");
-        // let single_uploaders = HashMap::with_capacity(10);
-
         let single_uploaders = Vec::with_capacity(10);
 
         return UploaderManager {
@@ -99,8 +90,6 @@ impl UploaderManager {
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
-        println!("UploaderManager running");
-
         let mut ip_address;
         loop {
             self.stop_incoming = false;
@@ -120,20 +109,10 @@ impl UploaderManager {
             }
 
             ip_address.push_str(&format!(":{}", self.config.get_sharing_port()));
-            println!("Waiting for incoming on {}", ip_address);
-
-            let listener = match TcpListener::bind(ip_address) {
-                Ok(listener) => listener,
-                Err(e) => todo!(), // TODO shutdown app
-            };
-
-            match listener.set_nonblocking(true) {
-                Ok(_) => {},
-                Err(e) => {
-                    // TODO app error
-                    todo!()
-                },
-            }
+            self.app_sender.send(AppAggMessage::LogInfo(format!("Waiting for incoming on {}", ip_address)))?;
+            
+            let listener = TcpListener::bind(ip_address)?;
+            listener.set_nonblocking(true)?;
 
             for stream in listener.incoming() {
                 self.read_receiver();
@@ -147,34 +126,12 @@ impl UploaderManager {
                             Receiver<MessageSingleUploader>,
                         ) = mpsc::channel();
 
-                        // let mut thread_id: Option<usize> = None;
-                        // for new_id in 0..usize::MAX {
-                        //     if self.single_uploaders.contains_key(&new_id) {
-                        //         continue;
-                        //     }
-                        //     thread_id = Some(new_id);
-                        //     break;
-                        // }
-                        // let thread_id = match thread_id {
-                        //     Some(thread_id) => thread_id,
-                        //     None => {
-                        //         // How did this actually happen? Every thread paniced and the user never performed and action to cause a cleanup
-                        //         //  Extremely long running session
-                        //         self.reset_connections();
-                        //         self.app_sender.send(AppAggMessage::AppFailedKill("Uploader map filled up".to_string()));
-                        //         panic!("Uploader map filled up");
-                        //     },
-                        // };
-                        // self.single_uploaders.insert(thread_id, sx);
-
                         self.remove_dead_uploaders();
                         self.single_uploaders.push(sx);
                         
                         let single_config = self.config.clone();
                         let app_sender_clone = self.app_sender.clone();
                         thread::spawn(move || {
-                            
-                            
                                 
                             let result = panic::catch_unwind(AssertUnwindSafe(|| {
                                 let mut single_uploader = SingleUploader::new(rx, single_config, app_sender_clone);
@@ -182,10 +139,9 @@ impl UploaderManager {
                                 // TODO log the failure ^
                             }));
 
-                            stream.shutdown(Shutdown::Both);
-
-                            //app_sender_clone.send(MessageSingleUploader::ShutdownConn);
-
+                            match stream.shutdown(Shutdown::Both) {
+                                _ => {}
+                            }
                             
                         });
                     },
@@ -194,9 +150,7 @@ impl UploaderManager {
                         continue;
                     }
                     Err(e) => {
-                        // TODO
-                        println!("ERROR: Failed initial client connection");
-                        println!("{:?}", e);
+                        self.app_sender.send(AppAggMessage::LogDebug(format!("Failed initial client connection {}", e.to_string())))?;
                         continue;
                     }
                 };
@@ -234,35 +188,13 @@ impl UploaderManager {
     }
 
     fn send_message_to_all_uploaders(&mut self, message: MessageSingleUploader) {
-        
-        // let mut remove_uploaders = Vec::new();
-        // for s in self.single_uploaders.iter_mut() {
-        //     match s.1.send(message.clone()) {
-        //         Ok(_) => {},
-        //         Err(_)=> {
-        //             remove_uploaders.push(s.0);
-        //         },
-        //     }
-        // }
-
-        // self.single_uploaders.ret
-        // for key in remove_uploaders {
-        //     &mut self.single_uploaders.remove(&key);
-        // }
-
-        // for s in &self.single_uploaders {
-        //     s.send(MessageSingleUploader::ShutdownConn);
-        // }
-
         self.single_uploaders.retain(|uploader| {
             let keep = {
                 match uploader.send(message.clone()) {
                     Ok(_) => {
-                        println!("KEEP UPLOADER");
                         true
                     },
                     Err(_) => {
-                        println!("REMOVE UPLOADER");
                         false
                     },
                 }
@@ -341,33 +273,23 @@ impl SingleUploader {
         let everything_file_json_bytes = everything_file_json.as_bytes().to_vec();
  
         loop {
-            self.read_receiver();
+            self.read_receiver()?;
             if self.should_shutdown {
                 break;
             }
-            match self.run_loop(&mut encrypted_stream, &everything_file, &everything_file_json_bytes) {
-                Ok(_) => {},
-                Err(e) => {
-                    // TODO proper return
-                    println!("{}", e.to_string());
-                    break;
-                },
-            }
+            self.run_loop(&mut encrypted_stream, &everything_file, &everything_file_json_bytes)?;
         }
 
         return Ok(());
         
         // TODO update Downloading From Me State - Disconnected? Remove from list entirely?
-        // TODO shutdown encrypted stream
-
-
     }
 
     fn run_loop(&mut self, encrypted_stream: &mut EncryptedStream, everything_file: &SharedFile, everything_file_json_bytes: &Vec<u8>) -> Result<(), Box<dyn Error>> {
 
         encrypted_stream.read()?;
 
-        self.read_receiver();
+        self.read_receiver()?;
         if self.should_shutdown {
             return Ok(());
         }
@@ -391,7 +313,7 @@ impl SingleUploader {
 
                 encrypted_stream.write(msg, &payload)?;
 
-                self.read_receiver();
+                self.read_receiver()?;
                 if self.should_shutdown {
                     return Ok(());
                 }
@@ -468,7 +390,7 @@ impl SingleUploader {
                     percent: if download_percent < 100 {download_percent} else {99}, // 100 will be sent outside this loop
                 }))?;
 
-                self.read_receiver();
+                self.read_receiver()?;
                 if self.should_shutdown {
                     return Ok(());
                 }
@@ -491,7 +413,7 @@ impl SingleUploader {
         return Ok(());
     }
 
-    fn read_receiver(&mut self) {
+    fn read_receiver(&mut self) -> Result<(), Box<dyn Error>> {
         loop {
             match self.receiver.try_recv() {
                 Ok(value) => match value {
@@ -503,11 +425,11 @@ impl SingleUploader {
                     },
                 }
                 Err(e) => match e {
-                    mpsc::TryRecvError::Empty => return,
+                    mpsc::TryRecvError::Empty => return Ok(()),
                     mpsc::TryRecvError::Disconnected => {
                         // When does this happen?
                         self.should_shutdown = true;
-                        self.app_sender.send(AppAggMessage::LogInfo(format!("Receiver disconnected '{}' '{}'", self.nickname, e.to_string())));
+                        self.app_sender.send(AppAggMessage::LogInfo(format!("Receiver disconnected '{}' '{}'", self.nickname, e.to_string())))?;
                     },
                 }
             }

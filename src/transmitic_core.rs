@@ -80,8 +80,8 @@ struct TotalDownloadState {
 //     }
 // }
 
-
-// TODO search for all unwraps
+// TODO stream connect timeout
+// TODO review stream, try_clone, set nonblocking
 // TODO how to handle non existing files?
 // TODO allow empty IP, port, and PublicIDs. "placeholder" users
 

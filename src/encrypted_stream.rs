@@ -23,8 +23,6 @@ pub struct EncryptedStream {
 impl EncryptedStream {
 
     pub fn new(stream: TcpStream, encryption_key: [u8; 32]) -> EncryptedStream {
-
-        println!("encs init");
         let key = GenericArray::from_slice(&encryption_key[..]);
         // Create AES and stream
         let cipher = Aes256Gcm::new(key);

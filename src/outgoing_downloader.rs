@@ -192,22 +192,14 @@ impl OutgoingDownloader {
         // CREATE CONNECTION
         let mut remote_address = shared_user.ip.clone();
         remote_address.push_str(&format!(":{}", shared_user.port.clone()));
-        println!("Downloader outgoing {} {}", shared_user.nickname, remote_address);
 
         let remote_socket_address: SocketAddr = match remote_address.parse() {
             Ok(remote_socket_address) => remote_socket_address,
             Err(e) => return Err(Box::new(e)), // TODO. This shouldn't happen. log.
         };
 
-        let mut stream = match TcpStream::connect_timeout(&remote_socket_address, time::Duration::from_secs(2)) {
-            Ok(stream) => stream,
-            Err(e) => {
-                println!("Failed '{}' refresh. Could not connect to '{}': {:?}", shared_user.nickname, remote_socket_address, e); // TODO log
-                return Err(Box::new(e));
-            }
-        };
+        let stream =  TcpStream::connect_timeout(&remote_socket_address, time::Duration::from_secs(2))?;
 
-        
         let mut transmitic_stream = TransmiticStream::new(stream, shared_user.clone(), self.config.get_local_private_id_bytes());
         let mut encrypted_stream = transmitic_stream.connect()?;
         
@@ -320,19 +312,19 @@ impl SingleDownloader {
     pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
 
         self.app_sender.send(AppAggMessage::LogInfo(format!("Start downloading from '{}'", self.shared_user.nickname)))?;
-        self.initialize_download_queue();
-        self.app_update_offline();
+        self.initialize_download_queue()?;
+        self.app_update_offline()?;
 
         let root_download_dir = get_path_downloads_dir_user(&self.shared_user.nickname)?;
         let mut root_download_dir = root_download_dir.into_os_string().to_str().unwrap().to_string();
         root_download_dir.push_str("/");
 
         loop {
-            self.read_receiver();
+            self.read_receiver()?;
 
             self.stop_downloading = false;  // Must come after read_receiver
 
-            self.app_update_in_progress();
+            self.app_update_in_progress()?;
 
             if self.is_downloading_paused {
                 thread::sleep(time::Duration::from_secs(1));
@@ -352,44 +344,40 @@ impl SingleDownloader {
             // CREATE CONNECTION
             let mut remote_address = self.shared_user.ip.clone();
             remote_address.push_str(&format!(":{}", self.shared_user.port.clone()));
-            println!("Downloader outgoing {} {}", self.shared_user.nickname, remote_address);
+            self.app_sender.send(AppAggMessage::LogInfo(format!("Downloader outgoing {} {}", self.shared_user.nickname, remote_address)))?;
 
-            let remote_socket_address: SocketAddr = match remote_address.parse() {
-                Ok(remote_socket_address) => remote_socket_address,
-                Err(e) => todo!(), // TODO. This shouldn't happen. log.
-            };
+            let remote_socket_address: SocketAddr = remote_address.parse()?;
 
-            let mut stream = match TcpStream::connect_timeout(&remote_socket_address, time::Duration::from_secs(1)) {
+            let stream = match TcpStream::connect_timeout(&remote_socket_address, time::Duration::from_secs(3)) {
                 Ok(stream) => stream,
                 Err(e) => {
-                    println!("Downloader outgoing Could not connect to '{}': {:?}", remote_socket_address, e); // TODO log
-                    self.app_update_offline();
-                    thread::sleep(time::Duration::from_secs(1));
+                    self.app_update_offline()?;
+                    thread::sleep(time::Duration::from_secs(5));
                     continue;
                 }
             };
 
             let mut transmitic_stream = TransmiticStream::new(stream, self.shared_user.clone(), self.private_id_bytes.clone());
-            let mut encrypted_stream = transmitic_stream.connect().unwrap(); // TODO remove unwrap
+            let mut encrypted_stream = transmitic_stream.connect()?;
             
             // request file list
             let message: u16 = MSG_FILE_LIST;
             let payload: Vec<u8> = Vec::new();
-            encrypted_stream.write(message, &payload).unwrap();
+            encrypted_stream.write(message, &payload)?;
 
             let mut json_bytes: Vec<u8> = Vec::new();
             loop {
-                encrypted_stream.read().unwrap();
-                let client_message = encrypted_stream.get_message().unwrap();
-                json_bytes.extend_from_slice(encrypted_stream.get_payload().unwrap());
+                encrypted_stream.read()?;
+                let client_message = encrypted_stream.get_message()?;
+                json_bytes.extend_from_slice(encrypted_stream.get_payload()?);
 
                 if client_message == MSG_FILE_LIST_FINAL {
                     break;
                 }
             }
 
-            let files_str = std::str::from_utf8(&json_bytes).unwrap();
-            let mut everything_file: SharedFile = serde_json::from_str(&files_str).unwrap();
+            let files_str = std::str::from_utf8(&json_bytes)?;
+            let mut everything_file: SharedFile = serde_json::from_str(&files_str)?;
 
             remove_invalid_files(&mut everything_file);
 
@@ -399,19 +387,17 @@ impl SingleDownloader {
                 let path_active_download = match self.download_queue.get(0) {
                     Some(path_active_download) => path_active_download.clone(),
                     None => {
-                        println!("Download queue empty");
                         break;
                     }
                 };
-
 
                 // Check if file is valid
                 let shared_file = match get_file_by_path(&path_active_download, &everything_file) {
                     Some(file) =>  file,
                     None => {
                         self.download_queue.pop_front();
-                        self.write_queue();
-                        self.app_update_invalid_file(&path_active_download);
+                        self.write_queue()?;
+                        self.app_update_invalid_file(&path_active_download)?;
                         continue;
                     }
                 };
@@ -429,39 +415,30 @@ impl SingleDownloader {
                 
                 self.active_download_local_path = Some(destination_path.clone());
 
-                self.app_update_in_progress();
+                self.app_update_in_progress()?;
 
                 // TODO what if directory subfile becomes invalid mid download?
-                self.download_shared_file(&mut encrypted_stream, &shared_file, &root_download_dir, &root_download_dir);
-
-                // TODO what if the download failed? don't pop
-                // Can't add pop in download_shared_file() since that's recursive
-                // TODO Pausing all Downloads causes inprogress to get added to completed
+                self.download_shared_file(&mut encrypted_stream, &shared_file, &root_download_dir, &root_download_dir)?;
 
                 // Download was _not_ interrupted, therefore it completed
                 if  !self.stop_downloading {
                     self.download_queue.pop_front();
-                    self.write_queue();
+                    self.write_queue()?;
                     self.active_download_path = None;
-                    self.app_update_completed(&path_active_download, destination_path);
+                    self.app_update_completed(&path_active_download, destination_path)?;
                 }
-
                 
-                // TODO
-                self.read_receiver();
+                self.read_receiver()?;
                 if self.stop_downloading {
                     break;
                 }
             }
 
-            // TODO shutdown stream
-
         }
 
-        return Ok(());
     }
 
-    fn download_shared_file(&mut self, encrypted_stream: &mut EncryptedStream, shared_file: &SharedFile, root_download_dir: &String, download_dir: &String) {
+    fn download_shared_file(&mut self, encrypted_stream: &mut EncryptedStream, shared_file: &SharedFile, root_download_dir: &String, download_dir: &String) -> Result<(), Box<dyn Error>> {
         let current_path_obj = Path::new(&shared_file.path);
         let current_path_name = current_path_obj.file_name().unwrap().to_str().unwrap();
 
@@ -475,18 +452,18 @@ impl SingleDownloader {
                     a_file,
                     root_download_dir,
                     &new_download_dir,
-                );
+                )?;
 
                 // TODO check download cancelled, reset connection
-                self.read_receiver();
+                self.read_receiver()?;
                 if self.stop_downloading {
-                    return;
+                    return Ok(());
                 }
             }
 
         } else {
             // Create directory for file download
-            fs::create_dir_all(&download_dir).unwrap();
+            fs::create_dir_all(&download_dir)?;
             let mut destination_path = download_dir.clone();
             destination_path.push_str(current_path_name);
             println!("Saving to: {}", destination_path);
@@ -496,7 +473,7 @@ impl SingleDownloader {
             let selection_payload: Vec<u8>;
             let file_length: u64;
             if Path::new(&destination_path).exists() {
-                file_length = metadata(&destination_path).unwrap().len();
+                file_length = metadata(&destination_path)?.len();
             } else {
                 file_length = 0;
             }
@@ -504,12 +481,11 @@ impl SingleDownloader {
             file_continue_payload.extend_from_slice(&shared_file.path.as_bytes());
             selection_msg = MSG_FILE_SELECTION_CONTINUE;
             selection_payload = file_continue_payload;
-            encrypted_stream.write(selection_msg, &selection_payload).unwrap();
+            encrypted_stream.write(selection_msg, &selection_payload)?;
 
             // Check first response for error
-            encrypted_stream.read().unwrap();
-            let remote_message = encrypted_stream.get_message().unwrap();
-            println!("{:?}", remote_message);
+            encrypted_stream.read()?;
+            let remote_message = encrypted_stream.get_message()?;
 
             // TODO check FILE_INVALID, CANNOT SELECT DIR, MSG_FILE_CHUNK, MSG_FILE_FINISHED
             // And blanket unexpected
@@ -521,38 +497,36 @@ impl SingleDownloader {
             if Path::new(&destination_path).exists() {
                 f = OpenOptions::new()
                     .write(true)
-                    .open(&destination_path)
-                    .unwrap();
-                f.seek(SeekFrom::End(0)).unwrap();
-                current_downloaded_bytes = metadata(&destination_path).unwrap().len() as usize;
+                    .open(&destination_path)?;
+                f.seek(SeekFrom::End(0))?;
+                current_downloaded_bytes = metadata(&destination_path)?.len() as usize;
             } else {
-                f = File::create(&destination_path).unwrap();
+                f = File::create(&destination_path)?;
                 current_downloaded_bytes = 0;
             }
 
             self.active_downloaded_current_bytes += current_downloaded_bytes as u64;
-            self.app_update_in_progress();
+            self.app_update_in_progress()?;
 
             loop {
 
                 let mut payload_bytes: Vec<u8> = Vec::new();
-                payload_bytes.extend_from_slice(encrypted_stream.get_payload().unwrap());
+                payload_bytes.extend_from_slice(encrypted_stream.get_payload()?);
                 current_downloaded_bytes += payload_bytes.len();
                 self.active_downloaded_current_bytes += payload_bytes.len() as u64;
                 
-                f.write(&payload_bytes).unwrap();
+                f.write(&payload_bytes)?;
 
-                self.app_update_in_progress();
+                self.app_update_in_progress()?;
 
-                encrypted_stream.read().unwrap();
+                encrypted_stream.read()?;
 
-                // TODO check reset, cancelled download
-                self.read_receiver();
+                self.read_receiver()?;
                 if self.stop_downloading {
-                    return;
+                    return Ok(());
                 }
 
-                let remote_message = encrypted_stream.get_message().unwrap();
+                let remote_message = encrypted_stream.get_message()?;
                 if remote_message == MSG_FILE_FINISHED {
                     // TODO
                     println!("100%\nDownload finished: {}", destination_path);
@@ -564,15 +538,10 @@ impl SingleDownloader {
             }
         }
 
-        // TODO HERE!!!!!!!!!!!!!!!
-        // Should the final return indicate Ok, the active download finished?
-        //  And if something failed anywhere else, set self.stop_downloading = True and return an Err.
-        //  Would this propgate any issues up, and allow the download to reset and remove any invalid files cleanly?
-        //  But changing self.stop_downloading manually here could break in the future.
-        //      Return Ok(continue downloading)/Err(stop)/Ok(active download finished) instead?
+        return Ok(());
     }
 
-    fn read_receiver(&mut self) {
+    fn read_receiver(&mut self) -> Result<(), Box<dyn Error>>  {
         loop{
             match self.receiver.try_recv() {
                 Ok(value) => match value {
@@ -582,7 +551,7 @@ impl SingleDownloader {
                     } => todo!(), // TODO
                     MessageSingleDownloader::NewDownload(s) => {
                         self.download_queue.push_back(s);
-                        self.write_queue();
+                        self.write_queue()?;
                     },
                     MessageSingleDownloader::CancelDownload(s) => {
                         self.download_queue.retain(|f| f != &s);
@@ -590,7 +559,7 @@ impl SingleDownloader {
                             self.active_download_path = None;
                         }
                         self.stop_downloading = true;
-                        self.write_queue();
+                        self.write_queue()?;
                     },
                     MessageSingleDownloader::PauseDownloads => {
                         self.is_downloading_paused = true;
@@ -603,29 +572,31 @@ impl SingleDownloader {
                         self.download_queue.clear();
                         self.active_download_path = None;
                         self.stop_downloading = true;
-                        self.write_queue();
+                        self.write_queue()?;
                     },
                     MessageSingleDownloader::DoNothingDownloader => {
                         // Don't do anything. Useful to reset the dead downloaders because the Sender fails
                     },
                 },
                 Err(e) => match e {
-                    mpsc::TryRecvError::Empty => return,
-                    mpsc::TryRecvError::Disconnected => return, // TODO log. When would this happen?
+                    mpsc::TryRecvError::Empty => return Ok(()),
+                    mpsc::TryRecvError::Disconnected => return Err(format!("Uploader receiver disconnected"))?, // TODO log. When would this happen?
                 },
             }
         }
     }
 
-    fn app_update_offline(&self) {
+    fn app_update_offline(&self) -> Result<(), Box<dyn Error>>  {
         let i = OfflineMessage {
             nickname: self.shared_user.nickname.clone(),
             download_queue: self.download_queue.clone(),
         };
-        self.app_sender.send(AppAggMessage::Offline(i)).unwrap();
+        self.app_sender.send(AppAggMessage::Offline(i))?;
+
+        return Ok(());
     }
 
-    fn app_update_in_progress(&self) {
+    fn app_update_in_progress(&self) -> Result<(), Box<dyn Error>>  {
         let i = InProgressMessage {
             nickname: self.shared_user.nickname.clone(),
             path: self.active_download_path.clone(),
@@ -633,26 +604,32 @@ impl SingleDownloader {
             download_queue: self.get_queue_without_active(),
             path_local_disk: self.active_download_local_path.clone(),
         };
-        self.app_sender.send(AppAggMessage::InProgress(i)).unwrap();
+        self.app_sender.send(AppAggMessage::InProgress(i))?;
+
+        return Ok(());
     }
 
-    fn app_update_completed(&self, path: &String, path_local_disk: String) {
+    fn app_update_completed(&self, path: &String, path_local_disk: String) -> Result<(), Box<dyn Error>>  {
         let i = CompletedMessage {
             nickname: self.shared_user.nickname.clone(),
             path: path.clone(),
             download_queue: self.get_queue_without_active(),
             path_local_disk: path_local_disk.clone(),
         };
-        self.app_sender.send(AppAggMessage::Completed(i)).unwrap();
+        self.app_sender.send(AppAggMessage::Completed(i))?;
+
+        return Ok(());
     }
 
-    fn app_update_invalid_file(&self, path: &String) {
+    fn app_update_invalid_file(&self, path: &String) -> Result<(), Box<dyn Error>>  {
         let i = InvalidFileMessage{
             nickname: self.shared_user.nickname.clone(),
             invalid_path: path.to_string(),
             download_queue: self.get_queue_without_active(),
         };
-        self.app_sender.send(AppAggMessage::InvalidFile(i)).unwrap();
+        self.app_sender.send(AppAggMessage::InvalidFile(i))?;
+
+        return Ok(());
     }
 
     fn get_queue_without_active(&self) -> VecDeque<String> {
@@ -665,15 +642,9 @@ impl SingleDownloader {
         return queue;
     }
 
-    fn initialize_download_queue(&mut self) {
+    fn initialize_download_queue(&mut self) -> Result<(), Box<dyn Error>> {
 
-        let contents = match fs::read_to_string(&self.path_queue_file) {
-            Ok(contents) => contents,
-            Err(e) => {
-                println!("{}", e.to_string()); // TODO log
-                return;
-            },
-        };
+        let contents = fs::read_to_string(&self.path_queue_file)?;
 
         for mut line in contents.lines() {
             line = line.trim();
@@ -681,9 +652,11 @@ impl SingleDownloader {
                 self.download_queue.push_back(line.to_string());
             }
         }
+
+        return Ok(());
     }
 
-    fn write_queue(&self) {
+    fn write_queue(&self) -> Result<(), Box<dyn Error>> {
 		let mut write_string = String::new();
 
 		for f in &self.download_queue {
@@ -694,9 +667,10 @@ impl SingleDownloader {
 			.write(true)
 			.create(true)
 			.truncate(true)
-			.open(&self.path_queue_file)
-			.unwrap();
-		f.write(write_string.as_bytes()).unwrap();
+			.open(&self.path_queue_file)?;;
+		f.write(write_string.as_bytes())?;
+
+        return Ok(());
 	}
 
 }
