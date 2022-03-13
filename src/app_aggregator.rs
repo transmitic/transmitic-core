@@ -1,15 +1,10 @@
 use std::collections::{VecDeque, HashMap};
-use std::hash::Hash;
 use std::sync::{mpsc, RwLock, Arc};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
 use crate::transmitic_core::{SingleDownloadState, SingleUploadState};
 
-
-struct DownloadStatus {
-
-}
 
 struct DownloadUpdateMessage {
     pub owner: String,
@@ -84,11 +79,19 @@ impl AppAggregator {
 
 }
 
+pub enum ExitCodes {
+    AppLoopRecFailed = 2,
+    AppFailedKill = 3,
+}
+
 fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>, upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>) {
     loop {
         let msg = match receiver.recv() {
             Ok(msg) => msg,
-            Err(e) => todo!(),
+            Err(e) => {
+                eprintln!("AppLoopRec failed. {}", e.to_string());
+                std::process::exit(ExitCodes::AppLoopRecFailed as i32)
+            },
         };
 
         match msg {
@@ -167,7 +170,10 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
                 let mut l = upload_state.write().unwrap();
                 l.insert(f.nickname.clone(), f);
             },
-            AppAggMessage::AppFailedKill(_) => todo!(),
+            AppAggMessage::AppFailedKill(s) => {
+                eprintln!("AppFailedKill. {}", s);
+                std::process::exit(ExitCodes::AppFailedKill as i32);
+            },
             AppAggMessage::LogDebug(s) => println!("[DEBUG]] {}", s),
             AppAggMessage::LogInfo(s) => println!("[INFO] {}", s),
             AppAggMessage::LogWarning(s) => println!("[WARNING] {}", s),

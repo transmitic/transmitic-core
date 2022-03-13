@@ -1,18 +1,11 @@
-use std::convert::TryInto;
 use std::env;
 use std::error::Error;
-use std::fmt;
 use std::fs;
 use std::fs::metadata;
-use std::io;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::path::PathBuf;
 
 extern crate base64;
-use aes_gcm::aead::generic_array::typenum::PartialDiv;
-use aes_gcm::aead::generic_array::typenum::private::IsNotEqualPrivate;
-use aes_gcm::aes::cipher::block;
 use ring::signature;
 use ring::signature::Ed25519KeyPair;
 use ring::signature::KeyPair;
@@ -50,7 +43,6 @@ struct ConfigFile {
 pub struct Config {
     first_start: bool,
     config_file: ConfigFile,
-	//local_key_pair: signature::Ed25519KeyPair,
 	local_private_key_bytes: Vec<u8>,
     path_dir_config: PathBuf,
 }

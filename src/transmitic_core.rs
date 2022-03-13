@@ -1,13 +1,12 @@
-use std::{error::Error, net::{SocketAddr, Incoming}, sync::{Arc, Mutex, RwLock, mpsc::Sender}, thread, collections::{HashMap, VecDeque}, hash::Hash, path::PathBuf};
+use std::{error::Error, sync::{Arc, RwLock}, collections::{HashMap, VecDeque}, path::PathBuf};
 
 extern crate x25519_dalek;
-use aes_gcm::aead::heapless::spsc::SingleCore;
 use ring::{
-	signature::{self, KeyPair},
+	signature::{self},
 };
 use serde::{Serialize, Deserialize};
 
-use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader, self}, incoming_uploader::{IncomingUploader, self, SharingState}, shared_file::{SelectedDownload, RefreshData}, app_aggregator::{AppAggregator, AppAggMessage, CompletedMessage}};
+use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader}, incoming_uploader::{IncomingUploader, SharingState}, shared_file::{SelectedDownload, RefreshData}, app_aggregator::{AppAggregator, AppAggMessage, CompletedMessage}};
 
 // TODO
 //  https://doc.rust-lang.org/std/sync/struct.BarrierWaitResult.html
@@ -24,61 +23,13 @@ pub struct TransmiticCore {
     sharing_state: SharingState,
     outgoing_downloader: OutgoingDownloader,
     incoming_uploader: IncomingUploader,
-    app_sender: Sender<AppAggMessage>,
     download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
 }
 
-struct DownloadStatus {
-    pub owner: String,
-    pub percent: u32,
-    pub path: String,
-}
 
-impl DownloadStatus {
 
-    pub fn new() -> DownloadStatus {
-        return DownloadStatus {
-            owner: "".to_string(),
-            percent: 0,
-            path: "Hello".to_string(),
-        }
-    }
 
-    pub fn addit(&mut self) {
-        self.owner = "bye".to_string();
-    }
-}
-
-// Dynamic: In Progress, Queued
-// Static: Finished, Invalid
-
-// Downloader Sends
-// nickname: String
-// inprogress_path: String
-// inprogress_percent: usize
-// queue: list<String>
-// completed: string
-// invalid: string
-
-struct TotalDownloadState {
-    pub in_progress: Vec<DownloadStatus>,
-    pub invalid: Vec<DownloadStatus>,
-}
-
-// struct DownloadState {
-//     state_map: HashMap<String, SingleDownloadState>,
-// }
-
-// impl DownloadState {
-
-//     pub fn new() -> DownloadState {
-
-//         return DownloadState {
-
-//         }
-//     }
-// }
 
 // TODO stream connect timeout
 // TODO review stream, try_clone, set nonblocking
@@ -158,7 +109,6 @@ impl TransmiticCore {
             sharing_state: SharingState::Off,
             outgoing_downloader,
             incoming_uploader,
-            app_sender,
             download_state: arc_download_state,
             upload_state: arc_upload_state,
         });

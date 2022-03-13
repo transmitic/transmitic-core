@@ -1,4 +1,4 @@
-use std::{net::{TcpStream, Shutdown}, io::{Write, Read}, error::Error};
+use std::{net::{TcpStream}, io::{Write, Read}, error::Error};
 
 use rand_core::OsRng;
 use ring::signature;
@@ -66,66 +66,21 @@ impl TransmiticStream {
         buffer[0..4].copy_from_slice(&TRAN_MAGIC_NUMBER);
         buffer[4] = TRAN_API_MAJOR;
         buffer[5..7].copy_from_slice(&TRAN_API_MINOR.to_be_bytes());
-        
-        match self.stream.write_all(&buffer) {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                println!("{} Send Transmitic header failed write {}", self.shared_user.nickname, e.to_string());
-                match self.stream.shutdown(Shutdown::Both) {
-                    Ok(_) => {
-                        return Err(Box::new(e));
-                    },
-                    Err(e2) => {
-                        // TODO
-                        println!("{} Send Transmitic header failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                        return Err(Box::new(e2));
-                    },
-                }
-            },
-        }
+        self.stream.write_all(&buffer)?;
+        return Ok(());
     }
 
     fn receive_transmitic_header(&mut self) -> Result<(), Box<dyn Error>> {
         let mut buffer: [u8; 7] = [0; 4 + 1 + 2];
         // TODO set read timeout
-        match self.stream.read_exact(&mut buffer) {
-            Ok(_) => {},
-            Err(e) => {
-                println!("{} Receive Transmitic header failed read. {}", self.shared_user.nickname, e.to_string());
-                match self.stream.shutdown(Shutdown::Both) {
-                    Ok(_) => {
-                        return Err(Box::new(e));
-                    },
-                    Err(e2) => {
-                        // TODO
-                        println!("{} Receive Transmitic header failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                        return Err(Box::new(e2));
-                    },
-                }
-            },
-        }
+        self.stream.read_exact(&mut buffer)?;
 
-        let mut header_correct = true;
         if buffer[0..4] != TRAN_MAGIC_NUMBER {
-            println!("{} TRAN MAGIC NUMBER mismatch. {:?}", self.shared_user.nickname, &buffer[0..4]);
-            header_correct = false;
+            return Err(format!("{} TRAN MAGIC NUMBER mismatch. {:?}", self.shared_user.nickname, &buffer[0..4]))?;
         }
 
-        if header_correct && buffer[4] != TRAN_API_MAJOR {
-            println!("{} TRAN API MAJOR mismatch. {}", self.shared_user.nickname, &buffer[4]);
-            header_correct = false;
-        }
-
-        if !header_correct {
-            match self.stream.shutdown(Shutdown::Both) {
-                Ok(_) => {
-                    return Err(format!("Transmitic Header not correct. {}", self.shared_user.nickname))?;
-                },
-                Err(e2) => {
-                    println!("{} Transmitic Header not correct failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                    return Err(Box::new(e2));
-                },
-            }
+        if buffer[4] != TRAN_API_MAJOR {
+            return Err(format!("{} TRAN API MAJOR mismatch. {}", self.shared_user.nickname, &buffer[4]))?;
         }
 
         return Ok(());
@@ -143,22 +98,7 @@ impl TransmiticStream {
         buffer[0..32].copy_from_slice(&local_diffie_public_bytes[0..32]);
         buffer[32..buffer_size].copy_from_slice(&local_diffie_signed_public_bytes[0..64]);
 
-        match self.stream.write_all(&buffer) {
-            Ok(_) => {},
-            Err(e) => {
-                println!("{} Conn diffie failed write {}", self.shared_user.nickname, e.to_string());
-                match self.stream.shutdown(Shutdown::Both) {
-                    Ok(_) => {
-                        return Err(Box::new(e));
-                    },
-                    Err(e2) => {
-                        // TODO
-                        println!("{} Conn diffie failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                        return Err(Box::new(e2));
-                    },
-                }
-            },
-        }
+        self.stream.write_all(&buffer)?;
 
         return Ok(local_diffie_secret);
     }
@@ -167,23 +107,7 @@ impl TransmiticStream {
         const buffer_size: usize = 32 + 64;
         let mut buffer: [u8; buffer_size] = [0; buffer_size];
         // TODO set read timeout
-        match self.stream.read_exact(&mut buffer) {
-            Ok(_) => {},
-            Err(e) => {
-                println!("{} Receive diffie helman failed read. {}", self.shared_user.nickname, e.to_string());
-                println!("{:?}", buffer);
-                match self.stream.shutdown(Shutdown::Both) {
-                    Ok(_) => {
-                        return Err(Box::new(e));
-                    },
-                    Err(e2) => {
-                        // TODO
-                        println!("{} Receive diffie helman failed shutdown. {}", self.shared_user.nickname, e2.to_string());
-                        return Err(Box::new(e2));
-                    },
-                }
-            },
-        }
+        self.stream.read_exact(&mut buffer)?;
         // Get diffie bytes from buffer
         let mut remote_diffie_public_bytes: [u8; 32] = [0; 32];
         remote_diffie_public_bytes.copy_from_slice(&buffer[0..32]);
@@ -193,13 +117,7 @@ impl TransmiticStream {
         remote_diffie_signed_public_bytes[..].copy_from_slice(&buffer[32..buffer_size]);
 
         // Load PublicID from shared_user
-        let remote_public_id_bytes = match crypto::get_bytes_from_base64_str(&self.shared_user.public_id) {
-            Ok(remote_public_id_bytes) => remote_public_id_bytes,
-            Err(e) => {
-                // TODO log
-                return Err(e);
-            },
-        };
+        let remote_public_id_bytes = crypto::get_bytes_from_base64_str(&self.shared_user.public_id)?;
         let remote_public_key =
 		signature::UnparsedPublicKey::new(&signature::ED25519, remote_public_id_bytes);
 
@@ -210,9 +128,8 @@ impl TransmiticStream {
 			&remote_diffie_signed_public_bytes,
 		) {
             Ok(_) => {},
-            Err(_) => {
-                // TODO log
-                return Err("Remote ID does not match.")?;
+            Err(e) => {
+                return Err(format!("Remote ID does not match. {}", e.to_string()))?;
             },
             }
         

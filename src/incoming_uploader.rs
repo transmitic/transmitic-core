@@ -1,20 +1,16 @@
 use core::time;
-use std::collections::HashMap;
 use std::error::Error;
 use std::fs::OpenOptions;
-use std::hash::Hash;
-use std::io::{Read, Write, SeekFrom, Seek};
+use std::io::{Read, SeekFrom, Seek};
 use std::net::{TcpListener, TcpStream, Shutdown};
 use std::panic::AssertUnwindSafe;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::{thread, panic};
 
-use serde::__private::de::TagContentOtherField;
-
 use crate::app_aggregator::AppAggMessage;
 use crate::config::{Config, SharedUser, get_everything_file};
-use crate::core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT, MSG_FILE_LIST, MSG_FILE_SELECTION_CONTINUE, MAX_DATA_SIZE, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE, MSG_FILE_INVALID_FILE, MSG_CANNOT_SELECT_DIRECTORY, MSG_FILE_CHUNK, MSG_FILE_FINISHED};
+use crate::core_consts::{MSG_FILE_LIST, MSG_FILE_SELECTION_CONTINUE, MAX_DATA_SIZE, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE, MSG_FILE_INVALID_FILE, MSG_CANNOT_SELECT_DIRECTORY, MSG_FILE_CHUNK, MSG_FILE_FINISHED};
 use crate::encrypted_stream::EncryptedStream;
 use crate::shared_file::SharedFile;
 use crate::transmitic_core::SingleUploadState;
@@ -48,7 +44,16 @@ impl IncomingUploader {
 
         thread::spawn(move || {
             let mut uploader_manager = UploaderManager::new(rx, config, SharingState::Off, app_sender);
-            uploader_manager.run();
+            match uploader_manager.run() {
+                Ok(_) => {
+                    eprintln!("UploadManager run ended");
+                    std::process::exit(1);
+                },
+                Err(e) => {
+                    eprintln!("UploadManager run failed {}", e.to_string());
+                    std::process::exit(1);
+                },
+            }
         });
 
         return IncomingUploader {
@@ -59,7 +64,10 @@ impl IncomingUploader {
     pub fn set_my_sharing_state(&self, sharing_state: SharingState) {
         match self.sender.send(MessageUploadManager::SharingStateMsg(sharing_state)) {
             Ok(_) => {},
-            Err(_) => todo!(), // TODO shutdown app
+            Err(e) => {
+                eprintln!("UploadManager sender failed {}", e.to_string());
+                std::process::exit(1);
+            }
         }
     }
 }

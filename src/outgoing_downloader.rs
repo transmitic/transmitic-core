@@ -1,24 +1,19 @@
 use core::time;
 use std::{
-    env,
     error::Error,
     fs::{self, metadata, File, OpenOptions},
-    path::{Path, PathBuf}, collections::{VecDeque, HashMap}, ops::Index, net::{SocketAddr, TcpStream, Shutdown}, io::{Write, Read, SeekFrom, Seek}, convert::TryInto, panic::{self, AssertUnwindSafe},
+    path::{Path, PathBuf}, collections::{VecDeque, HashMap},  net::{SocketAddr, TcpStream, }, io::{Write, SeekFrom, Seek}, panic::{self, AssertUnwindSafe},
 };
 
-use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload, RefreshData}, utils::get_file_by_path, encrypted_stream::{self, EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}, app_aggregator::{AppAggMessage, InvalidFileMessage, InProgressMessage, CompletedMessage, OfflineMessage}, config};
+use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload, RefreshData}, utils::get_file_by_path, encrypted_stream::{ EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}, app_aggregator::{AppAggMessage, InvalidFileMessage, InProgressMessage, CompletedMessage, OfflineMessage}, config};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
-use rand_core::OsRng;
 use ring::signature;
-use ring::signature::Ed25519KeyPair;
-use ring::signature::KeyPair;
-use x25519_dalek::{EphemeralSecret, PublicKey};
 
-use crate::{config::{Config, SharedUser}, core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR, CONN_ESTABLISH_REQUEST, CONN_ESTABLISH_ACCEPT, CONN_ESTABLISH_REJECT, MSG_FILE_LIST, MSG_FILE_LIST_FINAL}, transmitic_stream::TransmiticStream};
+use crate::{config::{Config, SharedUser}, core_consts::{MSG_FILE_LIST, MSG_FILE_LIST_FINAL}, transmitic_stream::TransmiticStream};
 
 pub struct OutgoingDownloader {
     config: Config,
@@ -71,23 +66,17 @@ impl OutgoingDownloader {
 
         if path_queue_file.exists() {
             self.channel_map.insert(user.nickname.clone(), sx);
+
             thread::spawn(move || {
                 
-                // TODO how to handle unexpected panics, and queue files, and starting new ones, and race conditions etc
-                //  maybe each downloader cannot maintain its own queue file?
-                // Put this thread in a while loop? Check result?
-                //  if panic result is Ok, let it die
-                //      else, restart it? But is the sender or receiver dead?
-                let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                    let mut downloader =
+                let mut downloader =
                         SingleDownloader::new(rx, private_id_bytes, user.clone(), path_queue_file, app_sender_clone, is_downloading_paused,);
-                    downloader.run();
-                }));
-                println!(
-                    "single downloader thread final exit {}",
-                    user.nickname.clone()
-                );  // TODO log
-
+                loop{    
+                    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                            
+                            downloader.run();
+                    }));
+                }
             });
         }
     }
@@ -107,7 +96,6 @@ impl OutgoingDownloader {
         }
     }
 
-    // TODO function to send message to all channels
     pub fn downloads_cancel_all(&mut self) {
         self.send_message_to_all_downloads(MessageSingleDownloader::CancelAllDownloads);
     }
@@ -115,9 +103,17 @@ impl OutgoingDownloader {
     pub fn downloads_cancel_single(&mut self, nickname: String, file_path: String) {
         match self.channel_map.get_mut(&nickname) {
             Some(channel) => {
-                channel.send(MessageSingleDownloader::CancelDownload(file_path));
+                match channel.send(MessageSingleDownloader::CancelDownload(file_path)) {
+                    Ok(_) => {},
+                    Err(_) => {
+                        // Downloader died, remove it
+                        // TODO but it's still in queue file?
+                        self.channel_map.remove(&nickname);
+                    },
+                }
             },
             None => {
+                // TODO could it be left in the queue file?
                 // Downloader already gone so there is nothing cancel
             },
         }
@@ -136,42 +132,44 @@ impl OutgoingDownloader {
     pub fn download_selected(&mut self, downloads: Vec<SelectedDownload>) -> Result<(), Box<dyn Error>> {
 
         for download in downloads {
-            
             match self.channel_map.get(&download.owner) {
                 Some(channel) => {         
-                    match channel.send(MessageSingleDownloader::NewDownload(download.path)) {
-                        Ok(_) => todo!(),
-                        Err(e) => {
-                            todo!("log")
-                            // TODO the thread must have shut down?
-                            //  If so, cleanup already occurred
-                            //  But this didn't make it into the queue file
-                            //  Queue files should be maintained by main thread?
+                    match channel.send(MessageSingleDownloader::NewDownload(download.path.clone())) {
+                        Ok(_) => {},
+                        Err(_) => {
+                            // Thread shutdown
+                            // Append to queue file then start downloader
+                            self.add_to_queue_file_and_start_downloader(download.owner, download.path)?;          
                         },
                     }
                 },
                 None => {
-                    // TODO func        
-                    let mut path_queue_file: PathBuf = self.config.get_path_dir_config();
-                    path_queue_file.push(format!("{}.txt", download.owner));
-
-                    match fs::write(path_queue_file.as_os_str(), download.path) {
-                        Ok(_) => {
-                            for user in self.config.get_shared_users() {
-                                if user.nickname == download.owner {
-                                    self.start_downloading_single_user(user);
-                                    break;
-                                }
-                            }
-                        },
-                        Err(_) => {
-                            // TODO
-                            todo!("log")
-                        },
-                    }
+                    self.add_to_queue_file_and_start_downloader(download.owner, download.path)?;
                 },
             }
+        }
 
+        return Ok(());
+    }
+
+    fn add_to_queue_file_and_start_downloader(&mut self, download_owner: String, download_path: String) -> Result<(), Box<dyn Error>> {
+        let mut path_queue_file: PathBuf = self.config.get_path_dir_config();
+        path_queue_file.push(format!("{}.txt", download_owner));
+
+        let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path_queue_file)?;
+    
+        // TODO func with write_queue()
+        let write_path = format!("{}\n", download_path);
+        file.write(write_path.as_bytes())?;
+
+        for user in self.config.get_shared_users() {
+            if user.nickname == download_owner {
+                self.start_downloading_single_user(user);
+                break;
+            }
         }
 
         return Ok(());
@@ -307,7 +305,13 @@ impl SingleDownloader {
         };
     }
 
-    // Ok -> An "expected" return. Eg Download finished
+    // TODO downloaders need to end when queue is empty
+    //  Race: a new download coming in as existing thread is shutting down
+    //    Note: Every download could be sent to every thread but threads only accept matching nickanames?
+    //      but could dead threads still be hanging around somewhere causing double downloads?
+    // TODO review logic of code that fails that just causes everything to restart anway
+    //  eg, if an IP fails to parse it'll all just start again anyway
+    //      Auto block? Show error in UI?
     // Error -> An "unexpected" return. Eg bad file path
     pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
 
@@ -528,8 +532,6 @@ impl SingleDownloader {
 
                 let remote_message = encrypted_stream.get_message()?;
                 if remote_message == MSG_FILE_FINISHED {
-                    // TODO
-                    println!("100%\nDownload finished: {}", destination_path);
                     break;
                 }
                 if remote_message != MSG_FILE_CHUNK {
