@@ -539,31 +539,47 @@ impl SingleDownloader {
                     MessageSingleDownloader::NewConfig {
                         private_id_bytes,
                         shared_user,
-                    } => todo!(), // TODO
+                    } => {
+                        self.stop_downloading = true;
+                        self.private_id_bytes = private_id_bytes;
+                        self.shared_user = shared_user;
+
+                        self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader NewConfig {}", self.shared_user.nickname.clone())))?;
+                    },
                     MessageSingleDownloader::NewDownload(s) => {
-                        self.download_queue.push_back(s);
+                        self.download_queue.push_back(s.clone());
                         self.write_queue()?;
+
+                        self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader new download {} - {}", self.shared_user.nickname.clone(), s)))?;
                     },
                     MessageSingleDownloader::CancelDownload(s) => {
+                        self.stop_downloading = true;
                         self.download_queue.retain(|f| f != &s);
-                        if self.active_download_path == Some(s) {
+                        if self.active_download_path == Some(s.clone()) {
                             self.active_download_path = None;
                         }
-                        self.stop_downloading = true;
                         self.write_queue()?;
+
+                        self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader cancel download {} - {}", self.shared_user.nickname.clone(), s)))?;
                     },
                     MessageSingleDownloader::PauseDownloads => {
-                        self.is_downloading_paused = true;
                         self.stop_downloading = true;
+                        self.is_downloading_paused = true;
+
+                        self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader pause {}", self.shared_user.nickname.clone())))?;
                     },
                     MessageSingleDownloader::ResumeDownloads => {
                         self.is_downloading_paused = false;
+
+                        self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader resume {}", self.shared_user.nickname.clone())))?;
                     }
                     MessageSingleDownloader::CancelAllDownloads => {
+                        self.stop_downloading = true;
                         self.download_queue.clear();
                         self.active_download_path = None;
-                        self.stop_downloading = true;
                         self.write_queue()?;
+
+                        self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader cancel all downloads {}", self.shared_user.nickname.clone())))?;
                     },
                 },
                 Err(e) => match e {
