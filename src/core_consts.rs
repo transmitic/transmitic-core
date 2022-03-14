@@ -4,6 +4,7 @@ pub const TRAN_API_MAJOR: u8 = 1;
 pub const TRAN_API_MINOR: u16 = 0;
 
 
+// TODO
 // CONNECTION ESTABLISH
 // Are these really needed?
 // REQUEST is obvious on first connect
@@ -12,7 +13,8 @@ pub const CONN_ESTABLISH_REQUEST: u16 = 0;
 pub const CONN_ESTABLISH_ACCEPT: u16 = 1;
 pub const CONN_ESTABLISH_REJECT: u16 = 2;
 
-//TODO REORG all
+// TODO REORG all
+// TODO ue repr enum below instead?
 
 pub const MSG_TYPE_SIZE: usize = 2;
 pub const PAYLOAD_SIZE_LEN: usize = 4;
@@ -35,3 +37,10 @@ pub const MAX_DATA_SIZE: usize = 100_000;
 pub const TOTAL_BUFFER_SIZE: usize = MSG_TYPE_SIZE + PAYLOAD_SIZE_LEN + MAX_DATA_SIZE;
 pub const TOTAL_CRYPTO_BUFFER_SIZE: usize = TOTAL_BUFFER_SIZE + 16;
 pub const PAYLOAD_OFFSET: usize = MSG_TYPE_SIZE + PAYLOAD_SIZE_LEN;
+
+// #[repr(u16)]
+// enum Mes {
+//     msg_file_list = 100000000,
+//     msg_file = 2,
+
+// }

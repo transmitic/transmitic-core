@@ -5,11 +5,6 @@ use std::thread;
 
 use crate::transmitic_core::{SingleDownloadState, SingleUploadState};
 
-
-struct DownloadUpdateMessage {
-    pub owner: String,
-}
-
 // TODO combine them all into 1 struct?
 pub struct InvalidFileMessage {
     pub nickname: String,
@@ -48,13 +43,12 @@ pub enum AppAggMessage {
     Completed(CompletedMessage),
     Offline(OfflineMessage),
     UploadStateChange(SingleUploadState),
-    AppFailedKill(String), // TODO
+    AppFailedKill(String),
 }
 
 // TODO clean up file
 
 pub struct AppAggregator {
-    sender: Option<Sender<AppAggMessage>>,
 }
 
 impl AppAggregator {
@@ -62,7 +56,6 @@ impl AppAggregator {
     pub fn new() -> AppAggregator {
 
         return AppAggregator {
-            sender: None,
         }
 
     }
@@ -79,6 +72,7 @@ impl AppAggregator {
 
 }
 
+// TODO use attribute? i32
 pub enum ExitCodes {
     AppLoopRecFailed = 2,
     AppFailedKill = 3,

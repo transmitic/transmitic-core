@@ -6,7 +6,7 @@ use ring::{
 };
 use serde::{Serialize, Deserialize};
 
-use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, crypto, outgoing_downloader::{OutgoingDownloader}, incoming_uploader::{IncomingUploader, SharingState}, shared_file::{SelectedDownload, RefreshData}, app_aggregator::{AppAggregator, AppAggMessage, CompletedMessage}};
+use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, outgoing_downloader::{OutgoingDownloader}, incoming_uploader::{IncomingUploader, SharingState}, shared_file::{SelectedDownload, RefreshData}, app_aggregator::{AppAggregator, AppAggMessage, CompletedMessage}};
 
 // TODO
 //  https://doc.rust-lang.org/std/sync/struct.BarrierWaitResult.html
@@ -17,6 +17,7 @@ pub struct LocalKeyData {
 	pub local_key_pair_bytes: Vec<u8>,
 }
 
+// TODO is first start load help
 pub struct TransmiticCore {
     config: Config,
     is_first_start: bool,
@@ -93,15 +94,15 @@ impl TransmiticCore {
         let arc_download_state = Arc::new(download_state_lock);
         let arc_clone = Arc::clone(&arc_download_state);
 
-        let mut app_agg = AppAggregator::new();
-        let mut app_sender = app_agg.start(arc_clone, arc_upload_clone);
+        let app_agg = AppAggregator::new();
+        let app_sender = app_agg.start(arc_clone, arc_upload_clone);
 
         app_sender.send(AppAggMessage::LogInfo("AppAgg started".to_string()))?;
 
         let mut outgoing_downloader = OutgoingDownloader::new(config.clone(), app_sender.clone())?;
         outgoing_downloader.start_downloading();
 
-        let mut incoming_uploader = IncomingUploader::new(config.clone(), app_sender.clone());
+        let incoming_uploader = IncomingUploader::new(config.clone(), app_sender.clone());
 
         return Ok(TransmiticCore {
             config: config,

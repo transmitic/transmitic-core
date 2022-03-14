@@ -471,7 +471,7 @@ fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<
             Err(e) => Err(format!("{}'s PublicID is invalid. Bad encoding. {}", user.nickname, e.to_string()))?,
         };
         // TODO catch the panic on failure? There's no Result here???
-        let parsed_id = signature::UnparsedPublicKey::new(&signature::ED25519, public_id);
+        signature::UnparsedPublicKey::new(&signature::ED25519, public_id);
 
         // Verify full ip and port address
         if user.ip == "" {

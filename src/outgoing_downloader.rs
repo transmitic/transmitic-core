@@ -17,7 +17,6 @@ use crate::{config::{Config, SharedUser}, core_consts::{MSG_FILE_LIST, MSG_FILE_
 
 pub struct OutgoingDownloader {
     config: Config,
-    path_dir_downloads: PathBuf,
     channel_map: HashMap<String, Sender<MessageSingleDownloader>>,
     app_sender: Sender<AppAggMessage>,
     is_downloading_paused: bool,
@@ -26,12 +25,10 @@ pub struct OutgoingDownloader {
 impl OutgoingDownloader {
     pub fn new(config: Config, app_sender: Sender<AppAggMessage>) -> Result<OutgoingDownloader, Box<dyn Error>> {
         create_downloads_dir()?;
-        let path_dir_downloads = config::get_path_dir_downloads()?;
         let channel_map= HashMap::with_capacity(10);
 
         return Ok(OutgoingDownloader {
             config,
-            path_dir_downloads,
             channel_map,
             app_sender,
             is_downloading_paused: false,
@@ -74,7 +71,7 @@ impl OutgoingDownloader {
                 loop{    
                     let result = panic::catch_unwind(AssertUnwindSafe(|| {
                             
-                            downloader.run();
+                    downloader.run();
                     }));
                 }
             });
@@ -242,7 +239,6 @@ fn get_path_downloads_dir_user(user: &String)  -> Result<PathBuf, std::io::Error
 }
 
 #[derive(Clone, Debug)]
-// Single Downloader
 enum MessageSingleDownloader {
     NewConfig {
         private_id_bytes: Vec<u8>,
@@ -253,12 +249,10 @@ enum MessageSingleDownloader {
     CancelDownload(String),
     PauseDownloads,
     ResumeDownloads,
-    DoNothingDownloader,
 }
 
 struct SingleDownloader {
     receiver: Receiver<MessageSingleDownloader>,
-    private_key_pair: signature::Ed25519KeyPair,
     private_id_bytes: Vec<u8>,
     shared_user: SharedUser,
     path_queue_file: PathBuf,
@@ -282,15 +276,10 @@ impl SingleDownloader {
         is_downloading_paused: bool,
     ) -> SingleDownloader {
 
-        // TODO function
-        let private_key_pair =
-        signature::Ed25519KeyPair::from_pkcs8(private_id_bytes.as_ref()).unwrap();
-
         let download_queue = VecDeque::new();
 
         return SingleDownloader {
             receiver,
-            private_key_pair,
             private_id_bytes,
             shared_user,
             path_queue_file,
@@ -354,7 +343,7 @@ impl SingleDownloader {
 
             let stream = match TcpStream::connect_timeout(&remote_socket_address, time::Duration::from_secs(3)) {
                 Ok(stream) => stream,
-                Err(e) => {
+                Err(_) => {
                     self.app_update_offline()?;
                     thread::sleep(time::Duration::from_secs(5));
                     continue;
@@ -576,9 +565,6 @@ impl SingleDownloader {
                         self.stop_downloading = true;
                         self.write_queue()?;
                     },
-                    MessageSingleDownloader::DoNothingDownloader => {
-                        // Don't do anything. Useful to reset the dead downloaders because the Sender fails
-                    },
                 },
                 Err(e) => match e {
                     mpsc::TryRecvError::Empty => return Ok(()),
@@ -669,7 +655,7 @@ impl SingleDownloader {
 			.write(true)
 			.create(true)
 			.truncate(true)
-			.open(&self.path_queue_file)?;;
+			.open(&self.path_queue_file)?;
 		f.write(write_string.as_bytes())?;
 
         return Ok(());

@@ -6,13 +6,14 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::{core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR}, config::SharedUser, crypto, encrypted_stream::EncryptedStream};
 
+const BUFFER_SIZE: usize = 32 + 64;
+
 
 // TODO drop struct and just use functions instead?
 pub struct TransmiticStream {
     stream: TcpStream,
     shared_user: SharedUser,
     private_key_pair:  signature::Ed25519KeyPair,
-    private_id_bytes: Vec<u8>,
 }
 
 impl TransmiticStream {
@@ -29,7 +30,6 @@ impl TransmiticStream {
             stream: stream,
             shared_user,
             private_key_pair,
-            private_id_bytes,
         }
 
     }
@@ -93,10 +93,9 @@ impl TransmiticStream {
         let local_diffie_signature_public_bytes = self.private_key_pair.sign(local_diffie_public_bytes);
         let local_diffie_signed_public_bytes = local_diffie_signature_public_bytes.as_ref();
         // diffie public key + diffie public key signed
-        const buffer_size: usize = 32 + 64;
-        let mut buffer = [0; buffer_size];
+        let mut buffer = [0; BUFFER_SIZE];
         buffer[0..32].copy_from_slice(&local_diffie_public_bytes[0..32]);
-        buffer[32..buffer_size].copy_from_slice(&local_diffie_signed_public_bytes[0..64]);
+        buffer[32..BUFFER_SIZE].copy_from_slice(&local_diffie_signed_public_bytes[0..64]);
 
         self.stream.write_all(&buffer)?;
 
@@ -104,8 +103,7 @@ impl TransmiticStream {
     }
 
     fn receive_diffie_helman_key(&mut self) -> Result<x25519_dalek::PublicKey, Box<dyn Error>> {
-        const buffer_size: usize = 32 + 64;
-        let mut buffer: [u8; buffer_size] = [0; buffer_size];
+        let mut buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
         // TODO set read timeout
         self.stream.read_exact(&mut buffer)?;
         // Get diffie bytes from buffer
@@ -114,7 +112,7 @@ impl TransmiticStream {
 
         // Get signed diffie bytes from buffer
         let mut remote_diffie_signed_public_bytes: [u8; 64] = [0; 64];
-        remote_diffie_signed_public_bytes[..].copy_from_slice(&buffer[32..buffer_size]);
+        remote_diffie_signed_public_bytes[..].copy_from_slice(&buffer[32..BUFFER_SIZE]);
 
         // Load PublicID from shared_user
         let remote_public_id_bytes = crypto::get_bytes_from_base64_str(&self.shared_user.public_id)?;
