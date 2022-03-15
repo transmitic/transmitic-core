@@ -179,7 +179,10 @@ impl UploaderManager {
                 },
                 Err(e) => match e {
                     mpsc::TryRecvError::Empty => return,
-                    mpsc::TryRecvError::Disconnected => return, // TODO log. When would this happen?
+                    mpsc::TryRecvError::Disconnected => {
+                        eprintln!("UploadManager receiver Disconnected");
+                        std::process::exit(1);
+                    },
                 },
             }
         }
@@ -289,8 +292,6 @@ impl SingleUploader {
         }
 
         return Ok(());
-        
-        // TODO update Downloading From Me State - Disconnected? Remove from list entirely?
     }
 
     fn run_loop(&mut self, encrypted_stream: &mut EncryptedStream, everything_file: &SharedFile, everything_file_json_bytes: &Vec<u8>) -> Result<(), Box<dyn Error>> {

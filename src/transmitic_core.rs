@@ -6,7 +6,7 @@ use ring::{
 };
 use serde::{Serialize, Deserialize};
 
-use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, outgoing_downloader::{OutgoingDownloader}, incoming_uploader::{IncomingUploader, SharingState}, shared_file::{SelectedDownload, RefreshData}, app_aggregator::{AppAggregator, AppAggMessage, CompletedMessage}};
+use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, outgoing_downloader::{OutgoingDownloader}, incoming_uploader::{IncomingUploader, SharingState}, shared_file::{SelectedDownload, RefreshData}, app_aggregator::{AppAggMessage, CompletedMessage, run_app_loop}};
 
 // TODO
 //  https://doc.rust-lang.org/std/sync/struct.BarrierWaitResult.html
@@ -94,8 +94,7 @@ impl TransmiticCore {
         let arc_download_state = Arc::new(download_state_lock);
         let arc_clone = Arc::clone(&arc_download_state);
 
-        let app_agg = AppAggregator::new();
-        let app_sender = app_agg.start(arc_clone, arc_upload_clone);
+        let app_sender = run_app_loop(arc_clone, arc_upload_clone);
 
         app_sender.send(AppAggMessage::LogInfo("AppAgg started".to_string()))?;
 

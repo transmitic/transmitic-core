@@ -466,12 +466,10 @@ fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<
         if user.public_id == "" {
             Err(format!("PublicID for '{}' cannot be empty", user.nickname))?;
         }
-        let public_id = match crypto::get_bytes_from_base64_str(&user.public_id) {
+        match crypto::get_bytes_from_base64_str(&user.public_id) {
             Ok(public_id) => public_id,
             Err(e) => Err(format!("{}'s PublicID is invalid. Bad encoding. {}", user.nickname, e.to_string()))?,
         };
-        // TODO catch the panic on failure? There's no Result here???
-        signature::UnparsedPublicKey::new(&signature::ED25519, public_id);
 
         // Verify full ip and port address
         if user.ip == "" {

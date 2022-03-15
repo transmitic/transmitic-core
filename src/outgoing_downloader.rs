@@ -190,7 +190,7 @@ impl OutgoingDownloader {
 
         let remote_socket_address: SocketAddr = match remote_address.parse() {
             Ok(remote_socket_address) => remote_socket_address,
-            Err(e) => return Err(Box::new(e)), // TODO. This shouldn't happen. log.
+            Err(e) => return Err(Box::new(e)),
         };
 
         let stream =  TcpStream::connect_timeout(&remote_socket_address, time::Duration::from_secs(2))?;

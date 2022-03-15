@@ -46,30 +46,15 @@ pub enum AppAggMessage {
     AppFailedKill(String),
 }
 
-// TODO clean up file
 
-pub struct AppAggregator {
-}
+pub fn run_app_loop(downlaod_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>, upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>) -> Sender<AppAggMessage>{
+    let (sender, receiver): (Sender<AppAggMessage>, Receiver<AppAggMessage>) = mpsc::channel();
 
-impl AppAggregator {
+    thread::spawn(move || {
+        app_loop(receiver, downlaod_state, upload_state);
+    });
 
-    pub fn new() -> AppAggregator {
-
-        return AppAggregator {
-        }
-
-    }
-
-    pub fn start(&self, downlaod_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>, upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>) -> Sender<AppAggMessage>{
-        let (sender, receiver): (Sender<AppAggMessage>, Receiver<AppAggMessage>) = mpsc::channel();
-
-        thread::spawn(move || {
-            app_loop(receiver, downlaod_state, upload_state);
-        });
-
-        return sender;
-    }
-
+    return sender;
 }
 
 // TODO use attribute? i32

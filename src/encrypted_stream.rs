@@ -43,7 +43,6 @@ impl EncryptedStream {
         let mut flip: bool;
         for i in 0..self.nonce.len() {
             let byte = self.nonce[i];
-            // TODO once this maxes out, we have to reset connection
             if byte >= 255 {
                 if i == self.nonce.len() - 1 {
                     return Err("ERROR: Nonce maxed. Reconnect.")?;
@@ -113,7 +112,6 @@ impl EncryptedStream {
 
     fn set_buffer(&mut self, message: u16, payload: &Vec<u8>) {
         // TODO check payload size and err if too big?
-
         let message_bytes = &message.to_be_bytes();
         self.buffer[..MSG_TYPE_SIZE].copy_from_slice(message_bytes);
 
@@ -130,21 +128,3 @@ impl EncryptedStream {
     }
 
 }
-
-// fn set_buffer(buffer: &mut [u8], msg_type: u16, payload: &Vec<u8>) {
-//     // TODO check payload size and err if too big?
-
-    
-//     buffer[..MSG_TYPE_SIZE].copy_from_slice(&msg_type.to_be_bytes());
-
-//     // Get size of payload
-//     let payload_size: usize = payload.len();
-//     let payload_size_u32: u32 = payload_size as u32;
-//     let payload_size_bytes = payload_size_u32.to_be_bytes();
-
-//     // Set size of payload
-//     buffer[MSG_TYPE_SIZE..PAYLOAD_SIZE_LEN + MSG_TYPE_SIZE].copy_from_slice(&payload_size_bytes[0..PAYLOAD_SIZE_LEN]);
-
-//     // Set payload
-//     buffer[PAYLOAD_OFFSET..PAYLOAD_OFFSET + payload_size].copy_from_slice(&payload);
-// }
