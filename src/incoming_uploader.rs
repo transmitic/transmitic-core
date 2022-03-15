@@ -26,6 +26,7 @@ pub enum SharingState {
 
 enum MessageUploadManager {
     SharingStateMsg(SharingState),
+    NewConfig(Config),
 }
 
 
@@ -63,6 +64,16 @@ impl IncomingUploader {
 
     pub fn set_my_sharing_state(&self, sharing_state: SharingState) {
         match self.sender.send(MessageUploadManager::SharingStateMsg(sharing_state)) {
+            Ok(_) => {},
+            Err(e) => {
+                eprintln!("UploadManager sender failed {}", e.to_string());
+                std::process::exit(1);
+            }
+        }
+    }
+
+    pub fn set_new_config(&self, new_config: Config) {
+        match self.sender.send(MessageUploadManager::NewConfig(new_config)) {
             Ok(_) => {},
             Err(e) => {
                 eprintln!("UploadManager sender failed {}", e.to_string());
@@ -173,6 +184,10 @@ impl UploaderManager {
                     match msg {
                         MessageUploadManager::SharingStateMsg(state) => {
                             self.sharing_state = state;
+                            self.reset_connections();
+                        },
+                        MessageUploadManager::NewConfig(config) => {
+                            self.config = config;
                             self.reset_connections();
                         },
                     }

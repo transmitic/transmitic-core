@@ -11,7 +11,6 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
-use ring::signature;
 
 use crate::{config::{Config, SharedUser}, core_consts::{MSG_FILE_LIST, MSG_FILE_LIST_FINAL}, transmitic_stream::TransmiticStream};
 
@@ -76,6 +75,14 @@ impl OutgoingDownloader {
                 }
             });
         }
+    }
+
+    pub fn set_new_config(&mut self, config: Config) {
+        self.config = config;
+    }
+
+    pub fn set_new_private_id(&mut self, private_id_bytes: Vec<u8>) {
+        self.send_message_to_all_downloads(MessageSingleDownloader::NewPrivateId(private_id_bytes.clone()));
     }
 
     fn send_message_to_all_downloads(&mut self, message: MessageSingleDownloader) {
@@ -240,10 +247,7 @@ fn get_path_downloads_dir_user(user: &String)  -> Result<PathBuf, std::io::Error
 
 #[derive(Clone, Debug)]
 enum MessageSingleDownloader {
-    NewConfig {
-        private_id_bytes: Vec<u8>,
-        shared_user: SharedUser,
-    },
+    NewPrivateId(Vec<u8>),
     NewDownload(String),
     CancelAllDownloads,
     CancelDownload(String),
@@ -536,15 +540,11 @@ impl SingleDownloader {
         loop{
             match self.receiver.try_recv() {
                 Ok(value) => match value {
-                    MessageSingleDownloader::NewConfig {
-                        private_id_bytes,
-                        shared_user,
-                    } => {
+                    MessageSingleDownloader::NewPrivateId(private_id_bytes) => {
                         self.stop_downloading = true;
                         self.private_id_bytes = private_id_bytes;
-                        self.shared_user = shared_user;
 
-                        self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader NewConfig {}", self.shared_user.nickname.clone())))?;
+                        self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader NewPrivateId {}", self.shared_user.nickname.clone())))?;
                     },
                     MessageSingleDownloader::NewDownload(s) => {
                         self.download_queue.push_back(s.clone());
