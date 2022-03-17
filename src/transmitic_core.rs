@@ -17,7 +17,7 @@ pub struct LocalKeyData {
 	pub local_key_pair_bytes: Vec<u8>,
 }
 
-// TODO is first start load help
+// TODO! is first start load help
 pub struct TransmiticCore {
     config: Config,
     is_first_start: bool,
@@ -33,7 +33,7 @@ pub struct TransmiticCore {
 
 
 // TODO stream connect timeout
-// TODO review stream, try_clone, set nonblocking
+// TODO! review stream, try_clone, set nonblocking
 // TODO how to handle non existing files?
 // TODO allow empty IP, port, and PublicIDs. "placeholder" users
 
@@ -229,10 +229,10 @@ impl TransmiticCore {
     }
 
     pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
-        self.config.remove_user(nickname)?;
+        self.config.remove_user(nickname.clone())?;
         self.incoming_uploader.set_new_config(self.config.clone());
         self.outgoing_downloader.set_new_config(self.config.clone());
-        // TODO outgoing_downloader
+        self.outgoing_downloader.remove_user(&nickname);
         return Ok(());
     }
 
@@ -244,13 +244,6 @@ impl TransmiticCore {
     pub fn set_user_is_allowed_state(&mut self, nickname: String, is_allowed: bool) -> Result<(), Box<dyn Error>> {
         self.config.set_user_is_allowed_state(nickname, is_allowed)?;
         self.incoming_uploader.set_new_config(self.config.clone());
-        self.outgoing_downloader.set_new_config(self.config.clone());
-        // TODO outgoing_downloader
-        return Ok(());
-    }
-
-    pub fn start_my_downloading(&mut self) -> Result<(), Box<dyn Error>> {
-
         return Ok(());
     }
 
@@ -260,10 +253,10 @@ impl TransmiticCore {
         // If nickname changes, need to write config, stop existing download, wait for existing download to stop, 
         //  change name of download folder, then allow update_user function to return.
 
-        self.config.update_user(nickname, new_public_id, new_ip, new_port)?;
+        self.config.update_user(nickname.clone(), new_public_id.clone(), new_ip.clone(), new_port.clone())?;
         self.incoming_uploader.set_new_config(self.config.clone());
         self.outgoing_downloader.set_new_config(self.config.clone());
-        // TODO outgoing_downloader
+        self.outgoing_downloader.update_user(&nickname)?;
         return Ok(());
     }
 

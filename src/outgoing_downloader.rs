@@ -65,13 +65,26 @@ impl OutgoingDownloader {
 
             thread::spawn(move || {
                 
+                // TODO! when the loop below errors and restarts, it COULD restart with the old private ID
+                //  it also can't get app user updates
+                //  ^ Wait, if app rx isn't dead, the message like NewConfig, are still waiting
+                //  Should those looping functions restart the dead threads. Then this block wouldn't need to loop
+                //      But it could die and it wouldn't restart until a new action came in?
+                // Does outgoing downloader need a manager thread?
+                // It can be alerted to paniced downloaders and restart
+                // just abort app? what could cause this to panic?
                 let mut downloader =
                         SingleDownloader::new(rx, private_id_bytes, user.clone(), path_queue_file, app_sender_clone, is_downloading_paused,);
-                loop{    
-                    let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                            
-                    downloader.run();
+                loop {    
+                    let result = panic::catch_unwind(AssertUnwindSafe(|| {    
+                        downloader.run();
                     }));
+                    
+                    match result {
+                        Ok(_) => break,
+                        Err(_) => {},
+                    }
+
                 }
             });
         }
@@ -123,6 +136,31 @@ impl OutgoingDownloader {
         }
     }
 
+    pub fn update_user(&mut self, nickname: &String) -> Result<(), Box<dyn Error>> {
+        for shared_user in self.config.get_shared_users() {
+            if &shared_user.nickname == nickname {
+                match self.channel_map.get_mut(nickname) {
+                    Some(channel) => {
+                        match channel.send(MessageSingleDownloader::NewSharedUser(shared_user)) {
+                            Ok(_) => {},
+                            Err(_) => {
+                                // Downloader died, remove it
+                                // TODO I need to restart this
+                                self.channel_map.remove(nickname);
+                            },
+                        }
+                    },
+                    None => {
+                        // TODO should this ever happen? no?
+                    },
+                }
+                return Ok(());
+            }
+        }
+
+        return Err(format!("Failed to find shared user {}", nickname))?;
+    }
+
     pub fn downloads_pause_all(&mut self) {
         self.is_downloading_paused = true;
         self.send_message_to_all_downloads(MessageSingleDownloader::PauseDownloads);
@@ -156,7 +194,27 @@ impl OutgoingDownloader {
         return Ok(());
     }
 
+    pub fn remove_user(&mut self, nickname: &String) {
+
+        match self.channel_map.get(nickname) {
+            Some(channel) => {         
+                match channel.send(MessageSingleDownloader::RemoveUser) {
+                    Ok(_) => {},
+                    Err(_) => {
+                        // Thread had already shutdown
+                    },
+                }
+            },
+            None => {
+                // No downloader, nothing to do
+            },
+        }
+
+        self.channel_map.remove(nickname);
+    }
+
     fn add_to_queue_file_and_start_downloader(&mut self, download_owner: String, download_path: String) -> Result<(), Box<dyn Error>> {
+        // TODO func for path
         let mut path_queue_file: PathBuf = self.config.get_path_dir_config();
         path_queue_file.push(format!("{}.txt", download_owner));
 
@@ -245,14 +303,21 @@ fn get_path_downloads_dir_user(user: &String)  -> Result<PathBuf, std::io::Error
     return Ok(path);
 }
 
+fn delete_queue_file(path: &PathBuf) -> Result<(), std::io::Error> {
+    fs::remove_file(path)?;
+    return Ok(());
+}
+
 #[derive(Clone, Debug)]
 enum MessageSingleDownloader {
+    NewSharedUser(SharedUser),
     NewPrivateId(Vec<u8>),
     NewDownload(String),
     CancelAllDownloads,
     CancelDownload(String),
     PauseDownloads,
     ResumeDownloads,
+    RemoveUser,
 }
 
 struct SingleDownloader {
@@ -268,6 +333,7 @@ struct SingleDownloader {
     active_download_size: u64,
     active_downloaded_current_bytes: u64,
     active_download_local_path: Option<String>,
+    shutdown: bool,
 }
 
 impl SingleDownloader {
@@ -295,9 +361,12 @@ impl SingleDownloader {
             active_download_size: 0,
             active_downloaded_current_bytes: 0,
             active_download_local_path: None,
+            shutdown: false,
         };
     }
 
+    // TODO! Does nonce error break run?
+    // TODO! How many errors should just loop again and not exit?
     // TODO downloaders need to end when queue is empty
     //  Race: a new download coming in as existing thread is shutting down
     //    Note: Every download could be sent to every thread but threads only accept matching nickanames?
@@ -318,6 +387,11 @@ impl SingleDownloader {
 
         loop {
             self.read_receiver()?;
+
+            if self.shutdown {
+                self.app_update_in_progress()?;
+                break;
+            }
 
             self.stop_downloading = false;  // Must come after read_receiver
 
@@ -414,11 +488,11 @@ impl SingleDownloader {
 
                 self.app_update_in_progress()?;
 
-                // TODO what if directory subfile becomes invalid mid download?
+                // TODO! what if directory subfile becomes invalid mid download?
                 self.download_shared_file(&mut encrypted_stream, &shared_file, &root_download_dir, &root_download_dir)?;
 
                 // Download was _not_ interrupted, therefore it completed
-                if  !self.stop_downloading {
+                if !self.stop_downloading {
                     self.download_queue.pop_front();
                     self.write_queue()?;
                     self.active_download_path = None;
@@ -432,6 +506,8 @@ impl SingleDownloader {
             }
 
         }
+
+        return Ok(());
 
     }
 
@@ -451,7 +527,7 @@ impl SingleDownloader {
                     &new_download_dir,
                 )?;
 
-                // TODO check download cancelled, reset connection
+                // TODO! check download cancelled, reset connection
                 self.read_receiver()?;
                 if self.stop_downloading {
                     return Ok(());
@@ -484,7 +560,7 @@ impl SingleDownloader {
             encrypted_stream.read()?;
             let remote_message = encrypted_stream.get_message()?;
 
-            // TODO check FILE_INVALID, CANNOT SELECT DIR, MSG_FILE_CHUNK, MSG_FILE_FINISHED
+            // TODO! check FILE_INVALID, CANNOT SELECT DIR, MSG_FILE_CHUNK, MSG_FILE_FINISHED
             // And blanket unexpected
 
             // Valid file, download it
@@ -581,10 +657,31 @@ impl SingleDownloader {
 
                         self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader cancel all downloads {}", self.shared_user.nickname.clone())))?;
                     },
+                    MessageSingleDownloader::RemoveUser => {
+                        self.shutdown = true;
+                        self.stop_downloading = true;
+                        self.download_queue.clear();
+                        self.active_download_path = None;
+                        match delete_queue_file(&self.path_queue_file) {
+                            Ok(_) => {},
+                            Err(_) => {
+                                // Couldn't delete. Maybe we can still write the empty queue file
+                                self.write_queue()?;
+                            },
+                        }
+
+                        self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader remove {}", self.shared_user.nickname.clone())))?;
+                    },
+                    MessageSingleDownloader::NewSharedUser(s) => {
+                        self.stop_downloading = true;
+                        self.shared_user = s;
+
+                        self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader update user {}", self.shared_user.nickname.clone())))?;
+                    },
                 },
                 Err(e) => match e {
                     mpsc::TryRecvError::Empty => return Ok(()),
-                    mpsc::TryRecvError::Disconnected => return Err(format!("Uploader receiver disconnected"))?, // TODO log. When would this happen?
+                    mpsc::TryRecvError::Disconnected => return Err(format!("Uploader receiver disconnected"))?,
                 },
             }
         }

@@ -47,6 +47,8 @@ pub struct Config {
     path_dir_config: PathBuf,
 }
 
+
+// TODO Config is passed around and has methods that should NOT be allowed to be called everywhere
 impl Config {
     pub fn new() -> Result<Config, Box<dyn Error>> {
         create_config_dir()?;

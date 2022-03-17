@@ -155,7 +155,7 @@ impl UploaderManager {
                             let result = panic::catch_unwind(AssertUnwindSafe(|| {
                                 let mut single_uploader = SingleUploader::new(rx, single_config, app_sender_clone);
                                 single_uploader.run(&stream);
-                                // TODO log the failure ^
+                                // TODO! log the failure ^
                             }));
 
                             match stream.shutdown(Shutdown::Both) {
