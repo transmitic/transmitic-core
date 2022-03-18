@@ -151,16 +151,34 @@ impl UploaderManager {
                         let single_config = self.config.clone();
                         let app_sender_clone = self.app_sender.clone();
                         thread::spawn(move || {
-                                
+                            
+                            let thread_app_sender = app_sender_clone.clone();
+                            let ip = match stream.peer_addr() {
+                                Ok(addr) => addr.to_string(),
+                                Err(_) => "Unknown IP".to_string(),
+                            };
                             let result = panic::catch_unwind(AssertUnwindSafe(|| {
                                 let mut single_uploader = SingleUploader::new(rx, single_config, app_sender_clone);
-                                single_uploader.run(&stream);
-                                // TODO! log the failure ^
+                                match single_uploader.run(&stream) {
+                                    Ok(_) => {},
+                                    Err(e) => {
+                                        thread_app_sender.send(AppAggMessage::LogDebug(format!("Uploader run error. {} - {}", ip, e.to_string()))).unwrap();
+                                    },
+                                }
                             }));
 
                             match stream.shutdown(Shutdown::Both) {
                                 _ => {}
                             }
+
+                            match result {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    thread_app_sender.send(AppAggMessage::LogDebug(format!("Uploader thread error. {} - {:?}", ip, e))).unwrap();
+                                },
+                            }
+
+
                             
                         });
                     },

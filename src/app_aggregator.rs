@@ -153,7 +153,7 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
                 eprintln!("AppFailedKill. {}", s);
                 std::process::exit(ExitCodes::AppFailedKill as i32);
             },
-            AppAggMessage::LogDebug(s) => println!("[DEBUG]] {}", s),
+            AppAggMessage::LogDebug(s) => println!("[DEBUG] {}", s),
             AppAggMessage::LogInfo(s) => println!("[INFO] {}", s),
             AppAggMessage::LogWarning(s) => println!("[WARNING] {}", s),
             AppAggMessage::LogError(s) => println!("[ERROR] {}", s),

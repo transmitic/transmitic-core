@@ -64,28 +64,29 @@ impl OutgoingDownloader {
             self.channel_map.insert(user.nickname.clone(), sx);
 
             thread::spawn(move || {
-                
-                // TODO! when the loop below errors and restarts, it COULD restart with the old private ID
-                //  it also can't get app user updates
-                //  ^ Wait, if app rx isn't dead, the message like NewConfig, are still waiting
-                //  Should those looping functions restart the dead threads. Then this block wouldn't need to loop
-                //      But it could die and it wouldn't restart until a new action came in?
-                // Does outgoing downloader need a manager thread?
-                // It can be alerted to paniced downloaders and restart
-                // just abort app? what could cause this to panic?
+                let thread_app_sender = app_sender_clone.clone();
+                let nickname = user.nickname.clone();
                 let mut downloader =
                         SingleDownloader::new(rx, private_id_bytes, user.clone(), path_queue_file, app_sender_clone, is_downloading_paused,);
                 loop {    
                     let result = panic::catch_unwind(AssertUnwindSafe(|| {    
-                        downloader.run();
+                        match downloader.run() {
+                            Ok(_) => {},
+                            Err(e) => {
+                                thread_app_sender.send(AppAggMessage::LogDebug(format!("Downloader run error. {} - {}", nickname, e.to_string()))).unwrap();
+                            },
+                        }
                     }));
                     
                     match result {
-                        Ok(_) => break,
-                        Err(_) => {},
+                        Ok(_) => break, // Graceful exit of run means we wanted to shutdown this thread down
+                        Err(e) => {
+                            thread_app_sender.send(AppAggMessage::LogDebug(format!("Downloader run panic. {} - {:?}", nickname, e))).unwrap();
+                        },
                     }
 
                 }
+                thread_app_sender.send(AppAggMessage::LogDebug(format!("Downloader run loop exit. {}", nickname))).unwrap();
             });
         }
     }
@@ -365,6 +366,9 @@ impl SingleDownloader {
         };
     }
 
+    // Errors that can't recover: Parsing IP
+    // Errors that can recover/restart: Server disconnects mid download
+    // How many errors just need to restart the loop, but cause run() to restart?
     // TODO! Does nonce error break run?
     // TODO! How many errors should just loop again and not exit?
     // TODO downloaders need to end when queue is empty
@@ -385,6 +389,7 @@ impl SingleDownloader {
         let mut root_download_dir = root_download_dir.into_os_string().to_str().unwrap().to_string();
         root_download_dir.push_str("/");
 
+        // TODO the inner loop logic in a function that will loop and handle errors to prevent the outer thread loop from restarting the above code?
         loop {
             self.read_receiver()?;
 
@@ -395,7 +400,6 @@ impl SingleDownloader {
 
             self.stop_downloading = false;  // Must come after read_receiver
 
-            self.app_update_in_progress()?;
 
             if self.is_downloading_paused {
                 thread::sleep(time::Duration::from_secs(1));
@@ -419,11 +423,14 @@ impl SingleDownloader {
 
             let remote_socket_address: SocketAddr = remote_address.parse()?;
 
+            
+
             let stream = match TcpStream::connect_timeout(&remote_socket_address, time::Duration::from_secs(3)) {
                 Ok(stream) => stream,
                 Err(_) => {
                     self.app_update_offline()?;
                     thread::sleep(time::Duration::from_secs(5));
+                    panic!("nah");
                     continue;
                 }
             };
@@ -488,7 +495,6 @@ impl SingleDownloader {
 
                 self.app_update_in_progress()?;
 
-                // TODO! what if directory subfile becomes invalid mid download?
                 self.download_shared_file(&mut encrypted_stream, &shared_file, &root_download_dir, &root_download_dir)?;
 
                 // Download was _not_ interrupted, therefore it completed
@@ -498,6 +504,7 @@ impl SingleDownloader {
                     self.active_download_path = None;
                     self.app_update_completed(&path_active_download, destination_path)?;
                 }
+                self.app_update_in_progress()?;
                 
                 self.read_receiver()?;
                 if self.stop_downloading {
@@ -527,7 +534,6 @@ impl SingleDownloader {
                     &new_download_dir,
                 )?;
 
-                // TODO! check download cancelled, reset connection
                 self.read_receiver()?;
                 if self.stop_downloading {
                     return Ok(());
@@ -560,8 +566,17 @@ impl SingleDownloader {
             encrypted_stream.read()?;
             let remote_message = encrypted_stream.get_message()?;
 
-            // TODO! check FILE_INVALID, CANNOT SELECT DIR, MSG_FILE_CHUNK, MSG_FILE_FINISHED
-            // And blanket unexpected
+            if remote_message == MSG_FILE_FINISHED {
+                return Ok(());
+            }
+            else if remote_message == MSG_FILE_CHUNK {
+                // Expected, most likely
+            }
+            else {
+                // TODO API mismatch, downloader should be disabled
+                return Err(format!("{} Initial file download unexpected msg {}", self.shared_user.nickname, remote_message))?;
+            }
+
 
             // Valid file, download it
             let mut current_downloaded_bytes: usize;
@@ -604,7 +619,8 @@ impl SingleDownloader {
                     break;
                 }
                 if remote_message != MSG_FILE_CHUNK {
-                    panic!("Expected MSG_FILE_CHUNK, got {}", remote_message);
+                    // TODO API mismatch, downloader should be disabled
+                    return Err(format!("{} Mid file download unexpected msg {}", self.shared_user.nickname, remote_message))?;
                 }
             }
         }
@@ -745,6 +761,7 @@ impl SingleDownloader {
 
     fn initialize_download_queue(&mut self) -> Result<(), Box<dyn Error>> {
 
+        self.download_queue.clear();
         let contents = fs::read_to_string(&self.path_queue_file)?;
 
         for mut line in contents.lines() {
