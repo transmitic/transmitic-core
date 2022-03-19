@@ -370,7 +370,7 @@ impl SingleDownloader {
     // Errors that can recover/restart: Server disconnects mid download
     // How many errors just need to restart the loop, but cause run() to restart?
     // TODO! Does nonce error break run?
-    // TODO! How many errors should just loop again and not exit?
+    // TODO How many errors should just loop again and not exit?
     // TODO downloaders need to end when queue is empty
     //  Race: a new download coming in as existing thread is shutting down
     //    Note: Every download could be sent to every thread but threads only accept matching nickanames?
@@ -430,7 +430,6 @@ impl SingleDownloader {
                 Err(_) => {
                     self.app_update_offline()?;
                     thread::sleep(time::Duration::from_secs(5));
-                    panic!("nah");
                     continue;
                 }
             };

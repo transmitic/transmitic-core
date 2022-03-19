@@ -17,7 +17,6 @@ pub struct LocalKeyData {
 	pub local_key_pair_bytes: Vec<u8>,
 }
 
-// TODO! is first start load help
 pub struct TransmiticCore {
     config: Config,
     is_first_start: bool,
@@ -186,6 +185,10 @@ impl TransmiticCore {
 
     pub fn get_download_state(&self) -> &Arc<RwLock<HashMap<String, SingleDownloadState>>> {
         return &self.download_state;
+    }
+
+    pub fn get_is_first_start(&self) -> bool {
+        return self.is_first_start;
     }
 
     pub fn get_upload_state(&self) -> &Arc<RwLock<HashMap<String, SingleUploadState>>> {
