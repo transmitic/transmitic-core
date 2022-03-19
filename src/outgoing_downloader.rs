@@ -69,9 +69,12 @@ impl OutgoingDownloader {
                 let mut downloader =
                         SingleDownloader::new(rx, private_id_bytes, user.clone(), path_queue_file, app_sender_clone, is_downloading_paused,);
                 loop {    
+                    let mut exit_loop = false;
                     let result = panic::catch_unwind(AssertUnwindSafe(|| {    
                         match downloader.run() {
-                            Ok(_) => {},
+                            Ok(_) => {
+                                exit_loop = true; // Downloader requests graceful exit
+                            },
                             Err(e) => {
                                 thread_app_sender.send(AppAggMessage::LogDebug(format!("Downloader run error. {} - {}", nickname, e.to_string()))).unwrap();
                             },
@@ -79,10 +82,14 @@ impl OutgoingDownloader {
                     }));
                     
                     match result {
-                        Ok(_) => break, // Graceful exit of run means we wanted to shutdown this thread down
-                        Err(e) => {
+                        Ok(_) => {},
+                        Err(e) => { // Panic occurred
                             thread_app_sender.send(AppAggMessage::LogDebug(format!("Downloader run panic. {} - {:?}", nickname, e))).unwrap();
                         },
+                    }
+
+                    if exit_loop {
+                        break;
                     }
 
                 }
