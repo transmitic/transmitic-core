@@ -570,12 +570,12 @@ fn read_config() -> Result<ConfigFile, Box<dyn Error>> {
 // TODO move into config?
 pub fn get_everything_file(config: &Config, nickname: &String) -> Result<SharedFile, Box<dyn Error>> {
     // The "root" everything directory
-    let mut everything_file: SharedFile = SharedFile {
-        path: "everything/".to_string(),
-        is_directory: true,
-        files: Vec::new(),
-        file_size: 0,
-    };
+    let mut everything_file = SharedFile::new(
+        "everything/".to_string(),
+        true,
+        Vec::new(),
+        0,
+    );
 
     // Get SharedFiles
     for file in &config.get_shared_files() {
@@ -594,12 +594,12 @@ pub fn get_everything_file(config: &Config, nickname: &String) -> Result<SharedF
             file_size = metadata(&path)?.len();
         }
 
-        let mut shared_file: SharedFile = SharedFile {
+        let mut shared_file: SharedFile = SharedFile::new(
             path,
             is_directory,
-            files: Vec::new(),
+            Vec::new(),
             file_size,
-        };
+        );
         let config_dir = match &config.get_path_dir_config().to_str() {
             Some(config_dir) => config_dir.to_string(),
             None => Err("Failed to convert config dir path to String")?,
@@ -608,6 +608,8 @@ pub fn get_everything_file(config: &Config, nickname: &String) -> Result<SharedF
         everything_file.file_size += shared_file.file_size;
         everything_file.files.push(shared_file);
     }
+
+    everything_file.set_file_size_string();
 
     return Ok(everything_file);
 }
@@ -637,16 +639,17 @@ pub fn process_shared_file(shared_file: &mut SharedFile, config_dir: &String) ->
             if is_directory == false {
                 file_size = metadata(&path_string)?.len();
             }
-            let mut new_shared_file = SharedFile {
-                path: path_string,
+            let mut new_shared_file = SharedFile::new(
+                path_string,
                 is_directory,
-                files: Vec::new(),
+          Vec::new(),
                 file_size,
-            };
+            );
             if is_directory {
                 process_shared_file(&mut new_shared_file, config_dir)?;
             }
             shared_file.file_size += new_shared_file.file_size;
+            shared_file.set_file_size_string();
             shared_file.files.push(new_shared_file);
         }
     }

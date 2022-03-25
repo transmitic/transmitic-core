@@ -22,6 +22,26 @@ pub struct SharedFile {
     pub is_directory: bool,
     pub files: Vec<SharedFile>,
     pub file_size: u64,
+    pub size_string: String,
+}
+
+impl SharedFile {
+    pub fn new(path: String, is_directory: bool, files: Vec<SharedFile>, file_size: u64) -> Self {
+        let size_string = get_file_size_string(file_size);
+        return SharedFile {
+            path: path,
+            is_directory: is_directory,
+            files: files,
+            file_size: file_size,
+            size_string: size_string,
+        }
+    }
+
+    // TODO added because I couldn't easily get big ints into the UI with the existing structure.
+    //  so create the string on the backend
+    pub fn set_file_size_string(&mut self) {
+        self.size_string = get_file_size_string(self.file_size);
+    }
 }
 
 pub fn remove_invalid_files(shared_file: &mut SharedFile) {
@@ -35,8 +55,6 @@ pub fn remove_invalid_files(shared_file: &mut SharedFile) {
 }
 
 pub fn print_shared_files(shared_file: &SharedFile, spacer: &String) {
-    let file_size_string = get_file_size_string(shared_file.file_size);
-
     let mut ftype = "file";
     if shared_file.is_directory {
         ftype = "dir";
@@ -44,7 +62,7 @@ pub fn print_shared_files(shared_file: &SharedFile, spacer: &String) {
 
     println!(
         "{}{} | ({}) ({})",
-        spacer, shared_file.path, file_size_string, ftype
+        spacer, shared_file.path, shared_file.size_string, ftype
     );
     if shared_file.is_directory {
         let mut new_spacer = spacer.clone();
@@ -55,7 +73,7 @@ pub fn print_shared_files(shared_file: &SharedFile, spacer: &String) {
     }
 }
 
-pub fn get_file_size_string(mut bytes: u64) -> String {
+fn get_file_size_string(mut bytes: u64) -> String {
     let gig: u64 = 1_000_000_000;
     let meg: u64 = 1_000_000;
     let byte: u64 = 1000;
