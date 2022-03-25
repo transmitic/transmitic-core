@@ -14,6 +14,8 @@ use std::thread;
 
 use crate::{config::{Config, SharedUser}, core_consts::{MSG_FILE_LIST, MSG_FILE_LIST_FINAL}, transmitic_stream::TransmiticStream};
 
+const ERR_REC_DISCONNECTED: &str = "Uploader receiver disconnected";
+
 pub struct OutgoingDownloader {
     config: Config,
     channel_map: HashMap<String, Sender<MessageSingleDownloader>>,
@@ -68,7 +70,8 @@ impl OutgoingDownloader {
                 let nickname = user.nickname.clone();
                 let mut downloader =
                         SingleDownloader::new(rx, private_id_bytes, user.clone(), path_queue_file, app_sender_clone, is_downloading_paused,);
-                loop {    
+                loop {
+                    // TODO on sciter exit, this loop runs a lot spamming log messages. receiver is shutdown
                     let mut exit_loop = false;
                     let result = panic::catch_unwind(AssertUnwindSafe(|| {    
                         match downloader.run() {
@@ -76,6 +79,9 @@ impl OutgoingDownloader {
                                 exit_loop = true; // Downloader requests graceful exit
                             },
                             Err(e) => {
+                                if e.to_string() == ERR_REC_DISCONNECTED {
+                                    exit_loop = true;
+                                }
                                 thread_app_sender.send(AppAggMessage::LogDebug(format!("Downloader run error. {} - {}", nickname, e.to_string()))).unwrap();
                             },
                         }
@@ -376,7 +382,6 @@ impl SingleDownloader {
     // Errors that can't recover: Parsing IP
     // Errors that can recover/restart: Server disconnects mid download
     // How many errors just need to restart the loop, but cause run() to restart?
-    // TODO! Does nonce error break run?
     // TODO How many errors should just loop again and not exit?
     // TODO downloaders need to end when queue is empty
     //  Race: a new download coming in as existing thread is shutting down
@@ -703,7 +708,7 @@ impl SingleDownloader {
                 },
                 Err(e) => match e {
                     mpsc::TryRecvError::Empty => return Ok(()),
-                    mpsc::TryRecvError::Disconnected => return Err(format!("Uploader receiver disconnected"))?,
+                    mpsc::TryRecvError::Disconnected => return Err(ERR_REC_DISCONNECTED)?,
                 },
             }
         }
