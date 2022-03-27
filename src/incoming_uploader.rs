@@ -469,9 +469,9 @@ impl SingleUploader {
                 Err(e) => match e {
                     mpsc::TryRecvError::Empty => return Ok(()),
                     mpsc::TryRecvError::Disconnected => {
-                        // When does this happen?
                         self.should_shutdown = true;
                         self.app_sender.send(AppAggMessage::LogInfo(format!("Receiver disconnected '{}' '{}'", self.nickname, e.to_string())))?;
+                        return Ok(());
                     },
                 }
             }
