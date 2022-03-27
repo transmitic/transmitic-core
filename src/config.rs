@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fs;
 use std::fs::metadata;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::path::PathBuf;
 
 extern crate base64;
@@ -417,6 +418,25 @@ pub fn file_contains_only_valid_chars(shared_file: &SharedFile) -> bool {
             return false;
         }
     }
+
+    // Remove .. paths, anything relative etc
+    let path = Path::new(&shared_file.path);
+    for part in path.iter() {
+        let mut keep = false;
+        let s = part.to_str().unwrap().to_string();
+        for c in s.chars() {
+            if c != '.' {
+                keep = true;
+                break;
+            }
+        }
+
+        if keep == false {
+            return false;
+        }
+
+    }
+
     return true;
 }
 
