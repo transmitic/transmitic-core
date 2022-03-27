@@ -495,11 +495,10 @@ impl SingleDownloader {
                 self.active_download_size = shared_file.file_size;
                 self.active_downloaded_current_bytes = 0;
 
-                let current_path_obj = Path::new(&shared_file.path);
-                let current_path_name = current_path_obj.file_name().unwrap().to_str().unwrap();
+                let current_path_name = get_sanitized_disk_file_name(&shared_file)?;
                 let mut destination_path = root_download_dir.clone();
                 if shared_file.is_directory {
-                    destination_path.push_str(current_path_name);
+                    destination_path.push_str(&current_path_name);
                 }
                 
                 self.active_download_local_path = Some(destination_path.clone());
@@ -530,13 +529,12 @@ impl SingleDownloader {
     }
 
     fn download_shared_file(&mut self, encrypted_stream: &mut EncryptedStream, shared_file: &SharedFile, root_download_dir: &String, download_dir: &String) -> Result<(), Box<dyn Error>> {
-        let current_path_obj = Path::new(&shared_file.path);
-        let current_path_name = current_path_obj.file_name().unwrap().to_str().unwrap();
+        let current_path_name = get_sanitized_disk_file_name(shared_file)?;
 
         if shared_file.is_directory {
             let mut new_download_dir = String::from(download_dir);
-            new_download_dir.push_str(current_path_name);
-            new_download_dir.push_str(&"/".to_string());
+            new_download_dir.push_str(&current_path_name);
+            new_download_dir.push_str("\\");
             for a_file in &shared_file.files {
                 self.download_shared_file(
                     encrypted_stream,
@@ -555,7 +553,7 @@ impl SingleDownloader {
             // Create directory for file download
             fs::create_dir_all(&download_dir)?;
             let mut destination_path = download_dir.clone();
-            destination_path.push_str(current_path_name);
+            destination_path.push_str(&current_path_name);
             println!("Saving to: {}", destination_path);
 
             // Send selection to server
@@ -802,4 +800,45 @@ impl SingleDownloader {
         return Ok(());
 	}
 
+
+
+}
+
+fn get_sanitized_disk_file_name(shared_file: &SharedFile) -> Result<String, Box<dyn Error>> {
+    let sanitized_path = sanitize_disk_path(&shared_file.path)?;
+    let current_path_obj = Path::new(&sanitized_path);
+    let current_path_name = current_path_obj.file_name().unwrap().to_str().unwrap().to_string();
+
+    return Ok(current_path_name);
+}
+
+fn sanitize_disk_path(path: &String) -> Result<String, Box<dyn Error>> {
+
+    let mut counter = 0;
+    let max_attempts = 10;
+    let original_path = path.clone();
+    let mut compare_path = original_path.clone();
+    let mut new_path = compare_path.clone();
+
+    while counter < max_attempts {
+        counter += 1;
+        compare_path = new_path.clone();
+
+        // Replace null bytes
+        new_path = new_path.replace("\0", "0");
+        if new_path != compare_path {
+            continue;
+        }
+
+        // Replace the network path, double slash, with a single slash
+        new_path = new_path.replace("\\\\", "\\");
+        if new_path != compare_path {
+            continue;
+        }
+
+        // Nothing has changed, path sanitized
+        return Ok(new_path);
+    }
+
+    return Err(format!("Path could not be sanitized after {} tries. {}", max_attempts, original_path))?;
 }
