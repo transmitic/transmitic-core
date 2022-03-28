@@ -660,6 +660,7 @@ impl SingleDownloader {
                             self.active_download_path = None;
                         }
                         self.write_queue()?;
+                        self.app_update_in_progress()?;
 
                         self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader cancel download {} - {}", self.shared_user.nickname.clone(), s)))?;
                     },
@@ -679,6 +680,7 @@ impl SingleDownloader {
                         self.download_queue.clear();
                         self.active_download_path = None;
                         self.write_queue()?;
+                        self.app_update_in_progress()?;
 
                         self.app_sender.send(AppAggMessage::LogDebug(format!("Downloader cancel all downloads {}", self.shared_user.nickname.clone())))?;
                     },
