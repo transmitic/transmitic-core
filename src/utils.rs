@@ -1,5 +1,9 @@
+use std::error::Error;
+
 use crate::shared_file::SharedFile;
 
+
+// TODO remove this module
 
 pub fn get_file_by_path(file_choice: &str, shared_file: &SharedFile) -> Option<SharedFile> {
 	if shared_file.path == file_choice {
@@ -14,3 +18,4 @@ pub fn get_file_by_path(file_choice: &str, shared_file: &SharedFile) -> Option<S
 
 	return None;
 }
+

@@ -46,7 +46,7 @@ impl SharedFile {
 
 pub fn remove_invalid_files(shared_file: &mut SharedFile) {
     if shared_file.is_directory {
-        shared_file.files.retain(|x|file_contains_only_valid_chars(x));
+        shared_file.files.retain(|x|file_contains_only_valid_chars(&x.path));
         for s in shared_file.files.iter_mut() {
             remove_invalid_files(s);
         }

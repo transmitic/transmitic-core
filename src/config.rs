@@ -412,16 +412,18 @@ fn get_blocked_file_path_chars() -> String {
     return block_chars;
 }
 
-pub fn file_contains_only_valid_chars(shared_file: &SharedFile) -> bool {
+pub fn file_contains_only_valid_chars(path: &String) -> bool {
     for c in get_blocked_file_path_chars().chars() {
-        if shared_file.path.contains(c) {
+        if path.contains(c) {
             return false;
         }
     }
 
     // Remove .. paths, anything relative etc
-    let path = Path::new(&shared_file.path);
+    let path = Path::new(&path);
+    println!("{:?}", path);
     for part in path.iter() {
+        println!("{:?}", part);
         let mut keep = false;
         let s = part.to_str().unwrap().to_string();
         for c in s.chars() {
@@ -553,6 +555,12 @@ fn verify_config_shared_files(shared_users: &Vec<SharedUser>, shared_files: &Vec
                 return Err(format!("Cannot share file '{}' because it contains the character '{}' which is not allowed. These characters are not allowed:   {}'.", file.path, c, get_blocked_file_path_chars()))?;
             }
         }
+
+        // Reject relative dirs
+        if file_contains_only_valid_chars(&file.path) == false {
+            return Err(format!("Cannot share file with relative directories or invalid characters. {}", file.path))?;
+        }
+
     }
 
     return Ok(());

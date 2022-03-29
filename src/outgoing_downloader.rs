@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf}, collections::{VecDeque, HashMap},  net::{SocketAddr, TcpStream, }, io::{Write, SeekFrom, Seek}, panic::{self, AssertUnwindSafe},
 };
 
-use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload, RefreshData}, utils::get_file_by_path, encrypted_stream::{ EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}, app_aggregator::{AppAggMessage, InvalidFileMessage, InProgressMessage, CompletedMessage, OfflineMessage}, config};
+use crate::{shared_file::{SharedFile, remove_invalid_files, print_shared_files, SelectedDownload, RefreshData}, utils::{get_file_by_path, self}, encrypted_stream::{ EncryptedStream}, core_consts::{MSG_FILE_SELECTION_CONTINUE, MSG_FILE_FINISHED, MSG_FILE_CHUNK}, app_aggregator::{AppAggMessage, InvalidFileMessage, InProgressMessage, CompletedMessage, OfflineMessage}, config};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -817,6 +817,7 @@ fn get_sanitized_disk_file_name(shared_file: &SharedFile) -> Result<String, Box<
 
     return Ok(current_path_name);
 }
+
 
 fn sanitize_disk_path(path: &String) -> Result<String, Box<dyn Error>> {
 
