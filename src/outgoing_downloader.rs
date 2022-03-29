@@ -486,6 +486,7 @@ impl SingleDownloader {
                     None => {
                         self.download_queue.pop_front();
                         self.write_queue()?;
+                        self.active_download_path = None;
                         self.app_update_invalid_file(&path_active_download)?;
                         continue;
                     }
@@ -714,6 +715,8 @@ impl SingleDownloader {
         }
     }
 
+    // TODO combine update_offline and in_progress into 1 method, and the downloader struct should track is_offline
+    //  then remove app_update_in_progress from read_receiver?
     fn app_update_offline(&self) -> Result<(), Box<dyn Error>>  {
         let i = OfflineMessage {
             nickname: self.shared_user.nickname.clone(),
@@ -752,6 +755,7 @@ impl SingleDownloader {
     fn app_update_invalid_file(&self, path: &String) -> Result<(), Box<dyn Error>>  {
         let i = InvalidFileMessage{
             nickname: self.shared_user.nickname.clone(),
+            active_path: self.active_download_path.clone(),
             invalid_path: path.to_string(),
             download_queue: self.get_queue_without_active(),
         };

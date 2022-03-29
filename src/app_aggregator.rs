@@ -8,6 +8,7 @@ use crate::transmitic_core::{SingleDownloadState, SingleUploadState};
 // TODO combine them all into 1 struct?
 pub struct InvalidFileMessage {
     pub nickname: String,
+    pub active_path: Option<String>,
     pub invalid_path: String,
     pub download_queue: VecDeque<String>,
 }
@@ -79,12 +80,14 @@ fn app_loop(receiver: Receiver<AppAggMessage>, download_state: Arc<RwLock<HashMa
                 let mut l = download_state.write().unwrap();
                 match l.get_mut(&f.nickname) {
                     Some(h) => {
+                        h.active_download_path = f.active_path;
                         h.invalid_downloads.push(f.invalid_path);
                         h.download_queue = f.download_queue;
                         h.is_online = true;
                     },
                     None => {
                         let mut s = SingleDownloadState::new();
+                        s.active_download_path = f.active_path;
                         s.invalid_downloads.push(f.invalid_path);
                         s.download_queue = f.download_queue;
                         l.insert(f.nickname, s);
