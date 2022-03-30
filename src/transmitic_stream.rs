@@ -36,11 +36,11 @@ impl TransmiticStream {
 
         stream.set_nonblocking(false).unwrap();
 
-        return TransmiticStream {
-            stream: stream,
+        TransmiticStream {
+            stream,
             shared_user,
             private_key_pair,
-        };
+        }
     }
 
     pub fn connect(&mut self) -> Result<EncryptedStream, Box<dyn Error>> {
@@ -50,7 +50,7 @@ impl TransmiticStream {
         let remote_diffie_key = self.receive_diffie_helman_key()?;
         let encryption_key = self.get_encryption_key(local_diffie_secret, remote_diffie_key);
         let encrypted_stream = self.get_encrypted_stream(encryption_key)?;
-        return Ok(encrypted_stream);
+        Ok(encrypted_stream)
     }
 
     pub fn wait_for_incoming(&mut self) -> Result<EncryptedStream, Box<dyn Error>> {
@@ -60,7 +60,7 @@ impl TransmiticStream {
         let local_diffie_secret = self.send_diffie_helman_key()?;
         let encryption_key = self.get_encryption_key(local_diffie_secret, remote_diffie_key);
         let encrypted_stream = self.get_encrypted_stream(encryption_key)?;
-        return Ok(encrypted_stream);
+        Ok(encrypted_stream)
     }
 
     fn get_encrypted_stream(
@@ -70,7 +70,7 @@ impl TransmiticStream {
         // TODO can i shutdown the original stream?
         let cloned_stream = self.stream.try_clone()?;
         let encrypted_stream = EncryptedStream::new(cloned_stream, encryption_key);
-        return Ok(encrypted_stream);
+        Ok(encrypted_stream)
     }
 
     fn send_transmitic_header(&mut self) -> Result<(), Box<dyn Error>> {
@@ -79,7 +79,7 @@ impl TransmiticStream {
         buffer[4] = TRAN_API_MAJOR;
         buffer[5..7].copy_from_slice(&TRAN_API_MINOR.to_be_bytes());
         self.stream.write_all(&buffer)?;
-        return Ok(());
+        Ok(())
     }
 
     fn receive_transmitic_header(&mut self) -> Result<(), Box<dyn Error>> {
@@ -92,17 +92,19 @@ impl TransmiticStream {
                 "{} TRAN MAGIC NUMBER mismatch. {:?}",
                 self.shared_user.nickname,
                 &buffer[0..4]
-            ))?;
+            )
+            .into());
         }
 
         if buffer[4] != TRAN_API_MAJOR {
             return Err(format!(
                 "{} TRAN API MAJOR mismatch. {}",
                 self.shared_user.nickname, &buffer[4]
-            ))?;
+            )
+            .into());
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn send_diffie_helman_key(&mut self) -> Result<EphemeralSecret, Box<dyn Error>> {
@@ -119,7 +121,7 @@ impl TransmiticStream {
 
         self.stream.write_all(&buffer)?;
 
-        return Ok(local_diffie_secret);
+        Ok(local_diffie_secret)
     }
 
     fn receive_diffie_helman_key(&mut self) -> Result<x25519_dalek::PublicKey, Box<dyn Error>> {
@@ -147,13 +149,13 @@ impl TransmiticStream {
         ) {
             Ok(_) => {}
             Err(e) => {
-                return Err(format!("Remote ID does not match. {}", e.to_string()))?;
+                return Err(format!("Remote ID does not match. {}", e.to_string()).into());
             }
         }
 
         // Create the diffie public key now that it's been verified
         let remote_diffie_public_key = PublicKey::from(remote_diffie_public_bytes);
-        return Ok(remote_diffie_public_key);
+        Ok(remote_diffie_public_key)
     }
 
     fn get_encryption_key(
@@ -163,6 +165,6 @@ impl TransmiticStream {
     ) -> [u8; 32] {
         let local_shared_secret = local_diffie_secret.diffie_hellman(&remote_diffie_public_key);
         let encryption_key = local_shared_secret.as_bytes();
-        return *encryption_key;
+        *encryption_key
     }
 }

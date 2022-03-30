@@ -57,7 +57,7 @@ impl IncomingUploader {
             }
         });
 
-        return IncomingUploader { sender: sx };
+        IncomingUploader { sender: sx }
     }
 
     pub fn set_my_sharing_state(&self, sharing_state: SharingState) {
@@ -105,14 +105,14 @@ impl UploaderManager {
     ) -> UploaderManager {
         let single_uploaders = Vec::with_capacity(10);
 
-        return UploaderManager {
+        UploaderManager {
             stop_incoming: false,
-            receiver: receiver,
+            receiver,
             config,
             sharing_state,
             single_uploaders,
             app_sender,
-        };
+        }
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
@@ -183,9 +183,7 @@ impl UploaderManager {
                                 }
                             }));
 
-                            match stream.shutdown(Shutdown::Both) {
-                                _ => {}
-                            }
+                            stream.shutdown(Shutdown::Both).ok();
 
                             match result {
                                 Ok(_) => {}
@@ -251,15 +249,8 @@ impl UploaderManager {
     }
 
     fn send_message_to_all_uploaders(&mut self, message: MessageSingleUploader) {
-        self.single_uploaders.retain(|uploader| {
-            let keep = {
-                match uploader.send(message.clone()) {
-                    Ok(_) => true,
-                    Err(_) => false,
-                }
-            };
-            keep
-        });
+        self.single_uploaders
+            .retain(|uploader| uploader.send(message.clone()).is_ok());
     }
 }
 
@@ -284,13 +275,13 @@ impl SingleUploader {
         app_sender: Sender<AppAggMessage>,
     ) -> SingleUploader {
         let nickname = String::new();
-        return SingleUploader {
+        SingleUploader {
             receiver,
             config,
             nickname,
             app_sender,
             should_shutdown: false,
-        };
+        }
     }
 
     // Ok -> An "expected" return. Eg Upload finished and even a user not allowed
@@ -358,14 +349,14 @@ impl SingleUploader {
             )?;
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn run_loop(
         &mut self,
         encrypted_stream: &mut EncryptedStream,
         everything_file: &SharedFile,
-        everything_file_json_bytes: &Vec<u8>,
+        everything_file_json_bytes: &[u8],
     ) -> Result<(), Box<dyn Error>> {
         encrypted_stream.read()?;
 
@@ -429,7 +420,7 @@ impl SingleUploader {
             )))?;
 
             // Determine if client's choice is valid
-            let client_shared_file = match get_file_by_path(client_file_choice, &everything_file) {
+            let client_shared_file = match get_file_by_path(client_file_choice, everything_file) {
                 Some(file) => file,
                 None => {
                     self.app_sender.send(AppAggMessage::LogWarning(format!(
@@ -479,8 +470,7 @@ impl SingleUploader {
                 encrypted_stream.write(MSG_FILE_CHUNK, &read_buffer[0..read_response].to_vec())?;
 
                 current_sent_bytes += read_response;
-                download_percent =
-                    (((current_sent_bytes as f64) / file_size_f64) * (100 as f64)) as u64;
+                download_percent = (((current_sent_bytes as f64) / file_size_f64) * 100_f64) as u64;
 
                 self.app_sender
                     .send(AppAggMessage::UploadStateChange(SingleUploadState {
@@ -517,10 +507,11 @@ impl SingleUploader {
                 "'{}' Invalid client selection '{}'",
                 self.nickname,
                 client_message.to_string()
-            ))?;
+            )
+            .into());
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn read_receiver(&mut self) -> Result<(), Box<dyn Error>> {

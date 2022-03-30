@@ -64,9 +64,9 @@ pub struct SingleDownloadState {
     pub is_online: bool,
 }
 
-impl SingleDownloadState {
-    pub fn new() -> SingleDownloadState {
-        return SingleDownloadState {
+impl Default for SingleDownloadState {
+    fn default() -> SingleDownloadState {
+        SingleDownloadState {
             active_download_path: None,
             active_download_percent: 0,
             active_download_local_path: None,
@@ -74,7 +74,7 @@ impl SingleDownloadState {
             invalid_downloads: Vec::new(),
             completed_downloads: Vec::new(),
             is_online: true,
-        };
+        }
     }
 }
 
@@ -103,22 +103,22 @@ impl TransmiticCore {
         let mut outgoing_downloader = OutgoingDownloader::new(config.clone(), app_sender.clone())?;
         outgoing_downloader.start_downloading();
 
-        let incoming_uploader = IncomingUploader::new(config.clone(), app_sender.clone());
+        let incoming_uploader = IncomingUploader::new(config.clone(), app_sender);
 
-        return Ok(TransmiticCore {
-            config: config,
+        Ok(TransmiticCore {
+            config,
             is_first_start,
             sharing_state: SharingState::Off,
             outgoing_downloader,
             incoming_uploader,
             download_state: arc_download_state,
             upload_state: arc_upload_state,
-        });
+        })
     }
 
     pub fn add_files(&mut self, files: Vec<String>) -> Result<(), Box<dyn Error>> {
         self.config.add_files(files)?;
-        return Ok(());
+        Ok(())
     }
 
     pub fn add_new_user(
@@ -131,7 +131,7 @@ impl TransmiticCore {
         self.config
             .add_new_user(new_nickname, new_public_id, new_ip, new_port)?;
         self.incoming_uploader.set_new_config(self.config.clone());
-        return Ok(());
+        Ok(())
     }
 
     pub fn add_user_to_shared(
@@ -141,7 +141,7 @@ impl TransmiticCore {
     ) -> Result<(), Box<dyn Error>> {
         self.config.add_user_to_shared(nickname, file_path)?;
         self.incoming_uploader.set_new_config(self.config.clone());
-        return Ok(());
+        Ok(())
     }
 
     pub fn create_new_id(&mut self) -> Result<(), Box<dyn Error>> {
@@ -150,7 +150,7 @@ impl TransmiticCore {
         self.outgoing_downloader.set_new_config(self.config.clone());
         self.outgoing_downloader
             .set_new_private_id(self.config.get_local_private_id_bytes());
-        return Ok(());
+        Ok(())
     }
 
     pub fn downloads_cancel_all(&mut self) {
@@ -189,59 +189,59 @@ impl TransmiticCore {
         downloads: Vec<SelectedDownload>,
     ) -> Result<(), Box<dyn Error>> {
         self.outgoing_downloader.download_selected(downloads)?;
-        return Ok(());
+        Ok(())
     }
 
     pub fn is_downloading_paused(&self) -> bool {
-        return self.outgoing_downloader.is_downloading_paused();
+        self.outgoing_downloader.is_downloading_paused()
     }
 
     pub fn set_port(&mut self, port: String) -> Result<(), Box<dyn Error>> {
         self.config.set_port(port)?;
         self.incoming_uploader.set_new_config(self.config.clone());
-        return Ok(());
+        Ok(())
     }
 
     pub fn get_download_state(&self) -> &Arc<RwLock<HashMap<String, SingleDownloadState>>> {
-        return &self.download_state;
+        &self.download_state
     }
 
     pub fn get_is_first_start(&self) -> bool {
-        return self.is_first_start;
+        self.is_first_start
     }
 
     pub fn get_upload_state(&self) -> &Arc<RwLock<HashMap<String, SingleUploadState>>> {
-        return &self.upload_state;
+        &self.upload_state
     }
 
     pub fn get_public_id_string(&self) -> String {
-        return self.config.get_public_id_string();
+        self.config.get_public_id_string()
     }
 
     pub fn get_my_sharing_files(&self) -> Vec<ConfigSharedFile> {
-        return self.config.get_shared_files();
+        self.config.get_shared_files()
     }
 
     pub fn get_my_sharing_state(&self) -> SharingState {
-        return self.sharing_state.clone();
+        self.sharing_state.clone()
     }
 
     pub fn get_shared_users(&self) -> Vec<SharedUser> {
-        return self.config.get_shared_users();
+        self.config.get_shared_users()
     }
 
     pub fn get_sharing_port(&self) -> String {
-        return self.config.get_sharing_port();
+        self.config.get_sharing_port()
     }
 
     pub fn refresh_shared_with_me(&mut self) -> Vec<RefreshData> {
-        return self.outgoing_downloader.refresh_shared_with_me();
+        self.outgoing_downloader.refresh_shared_with_me()
     }
 
     pub fn remove_file_from_sharing(&mut self, file_path: String) -> Result<(), Box<dyn Error>> {
         self.config.remove_file_from_sharing(file_path)?;
         self.incoming_uploader.set_new_config(self.config.clone());
-        return Ok(());
+        Ok(())
     }
 
     pub fn remove_user_from_sharing(
@@ -251,7 +251,7 @@ impl TransmiticCore {
     ) -> Result<(), Box<dyn Error>> {
         self.config.remove_user_from_sharing(nickname, file_path)?;
         self.incoming_uploader.set_new_config(self.config.clone());
-        return Ok(());
+        Ok(())
     }
 
     pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
@@ -259,7 +259,7 @@ impl TransmiticCore {
         self.incoming_uploader.set_new_config(self.config.clone());
         self.outgoing_downloader.set_new_config(self.config.clone());
         self.outgoing_downloader.remove_user(&nickname);
-        return Ok(());
+        Ok(())
     }
 
     pub fn set_my_sharing_state(&mut self, sharing_state: SharingState) {
@@ -276,7 +276,7 @@ impl TransmiticCore {
         self.config
             .set_user_is_allowed_state(nickname, is_allowed)?;
         self.incoming_uploader.set_new_config(self.config.clone());
-        return Ok(());
+        Ok(())
     }
 
     pub fn update_user(
@@ -291,19 +291,15 @@ impl TransmiticCore {
         // If nickname changes, need to write config, stop existing download, wait for existing download to stop,
         //  change name of download folder, then allow update_user function to return.
 
-        self.config.update_user(
-            nickname.clone(),
-            new_public_id.clone(),
-            new_ip.clone(),
-            new_port.clone(),
-        )?;
+        self.config
+            .update_user(nickname.clone(), new_public_id, new_ip, new_port)?;
         self.incoming_uploader.set_new_config(self.config.clone());
         self.outgoing_downloader.set_new_config(self.config.clone());
         self.outgoing_downloader.update_user(&nickname)?;
-        return Ok(());
+        Ok(())
     }
 
     pub fn get_downloads_dir(&self) -> Result<PathBuf, std::io::Error> {
-        return config::get_path_dir_downloads();
+        config::get_path_dir_downloads()
     }
 }

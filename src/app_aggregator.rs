@@ -57,7 +57,7 @@ pub fn run_app_loop(
         app_loop(receiver, downlaod_state, upload_state);
     });
 
-    return sender;
+    sender
 }
 
 // TODO use attribute? i32
@@ -66,6 +66,7 @@ pub enum ExitCodes {
     AppFailedKill = 3,
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn app_loop(
     receiver: Receiver<AppAggMessage>,
     download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
@@ -92,7 +93,7 @@ fn app_loop(
                         h.is_online = true;
                     }
                     None => {
-                        let mut s = SingleDownloadState::new();
+                        let mut s = SingleDownloadState::default();
                         s.active_download_path = f.active_path;
                         s.invalid_downloads.push(f.invalid_path);
                         s.download_queue = f.download_queue;
@@ -111,7 +112,7 @@ fn app_loop(
                         h.is_online = true;
                     }
                     None => {
-                        let mut s = SingleDownloadState::new();
+                        let mut s = SingleDownloadState::default();
                         s.active_download_path = f.path;
                         s.active_download_local_path = f.path_local_disk;
                         s.active_download_percent = f.percent;
@@ -131,7 +132,7 @@ fn app_loop(
                         h.is_online = true;
                     }
                     None => {
-                        let mut s = SingleDownloadState::new();
+                        let mut s = SingleDownloadState::default();
                         s.completed_downloads.push(f.clone());
                         s.download_queue = f.download_queue;
                         s.active_download_path = None;
@@ -147,7 +148,7 @@ fn app_loop(
                         h.download_queue = f.download_queue;
                     }
                     None => {
-                        let mut s = SingleDownloadState::new();
+                        let mut s = SingleDownloadState::default();
                         s.is_online = false;
                         s.download_queue = f.download_queue;
                         l.insert(f.nickname, s);

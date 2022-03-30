@@ -19,7 +19,7 @@ use crate::{
     shared_file::{
         print_shared_files, remove_invalid_files, RefreshData, SelectedDownload, SharedFile,
     },
-    utils::{self, get_file_by_path},
+    utils::get_file_by_path,
 };
 
 use std::sync::mpsc;
@@ -49,16 +49,16 @@ impl OutgoingDownloader {
         create_downloads_dir()?;
         let channel_map = HashMap::with_capacity(10);
 
-        return Ok(OutgoingDownloader {
+        Ok(OutgoingDownloader {
             config,
             channel_map,
             app_sender,
             is_downloading_paused: false,
-        });
+        })
     }
 
     pub fn is_downloading_paused(&self) -> bool {
-        return self.is_downloading_paused;
+        self.is_downloading_paused
     }
 
     pub fn start_downloading(&mut self) {
@@ -81,7 +81,7 @@ impl OutgoingDownloader {
 
         let app_sender_clone = self.app_sender.clone();
 
-        let is_downloading_paused = self.is_downloading_paused.clone();
+        let is_downloading_paused = self.is_downloading_paused;
 
         if path_queue_file.exists() {
             self.channel_map.insert(user.nickname.clone(), sx);
@@ -152,9 +152,7 @@ impl OutgoingDownloader {
     }
 
     pub fn set_new_private_id(&mut self, private_id_bytes: Vec<u8>) {
-        self.send_message_to_all_downloads(MessageSingleDownloader::NewPrivateId(
-            private_id_bytes.clone(),
-        ));
+        self.send_message_to_all_downloads(MessageSingleDownloader::NewPrivateId(private_id_bytes));
     }
 
     fn send_message_to_all_downloads(&mut self, message: MessageSingleDownloader) {
@@ -176,6 +174,7 @@ impl OutgoingDownloader {
         self.send_message_to_all_downloads(MessageSingleDownloader::CancelAllDownloads);
     }
 
+    #[allow(clippy::single_match)]
     pub fn downloads_cancel_single(&mut self, nickname: String, file_path: String) {
         match self.channel_map.get_mut(&nickname) {
             Some(channel) => {
@@ -195,9 +194,10 @@ impl OutgoingDownloader {
         }
     }
 
-    pub fn update_user(&mut self, nickname: &String) -> Result<(), Box<dyn Error>> {
+    #[allow(clippy::single_match)]
+    pub fn update_user(&mut self, nickname: &str) -> Result<(), Box<dyn Error>> {
         for shared_user in self.config.get_shared_users() {
-            if &shared_user.nickname == nickname {
+            if shared_user.nickname == nickname {
                 match self.channel_map.get_mut(nickname) {
                     Some(channel) => {
                         match channel.send(MessageSingleDownloader::NewSharedUser(shared_user)) {
@@ -217,7 +217,7 @@ impl OutgoingDownloader {
             }
         }
 
-        return Err(format!("Failed to find shared user {}", nickname))?;
+        return Err(format!("Failed to find shared user {}", nickname).into());
     }
 
     pub fn downloads_pause_all(&mut self) {
@@ -256,22 +256,13 @@ impl OutgoingDownloader {
             }
         }
 
-        return Ok(());
+        Ok(())
     }
 
-    pub fn remove_user(&mut self, nickname: &String) {
-        match self.channel_map.get(nickname) {
-            Some(channel) => {
-                match channel.send(MessageSingleDownloader::RemoveUser) {
-                    Ok(_) => {}
-                    Err(_) => {
-                        // Thread had already shutdown
-                    }
-                }
-            }
-            None => {
-                // No downloader, nothing to do
-            }
+    pub fn remove_user(&mut self, nickname: &str) {
+        // User still exists, else it's already gone, doesn't matter
+        if let Some(channel) = self.channel_map.get(nickname) {
+            channel.send(MessageSingleDownloader::RemoveUser).ok(); // If it fails thread already died, doesn't matter
         }
 
         self.channel_map.remove(nickname);
@@ -293,7 +284,7 @@ impl OutgoingDownloader {
 
         // TODO func with write_queue()
         let write_path = format!("{}\n", download_path);
-        file.write(write_path.as_bytes())?;
+        file.write_all(write_path.as_bytes())?;
 
         for user in self.config.get_shared_users() {
             if user.nickname == download_owner {
@@ -302,7 +293,7 @@ impl OutgoingDownloader {
             }
         }
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn refresh_shared_with_me(&mut self) -> Vec<RefreshData> {
@@ -315,7 +306,7 @@ impl OutgoingDownloader {
             });
         }
 
-        return refresh_list;
+        refresh_list
     }
 
     fn refresh_single_user(
@@ -359,31 +350,31 @@ impl OutgoingDownloader {
         }
 
         let files_str = std::str::from_utf8(&json_bytes)?;
-        let mut everything_file: SharedFile = serde_json::from_str(&files_str)?;
+        let mut everything_file: SharedFile = serde_json::from_str(files_str)?;
 
         remove_invalid_files(&mut everything_file);
 
         print_shared_files(&everything_file, &"".to_string());
 
-        return Ok(everything_file);
+        Ok(everything_file)
     }
 }
 
 fn create_downloads_dir() -> Result<(), std::io::Error> {
     let path = config::get_path_dir_downloads()?;
     fs::create_dir_all(path)?;
-    return Ok(());
+    Ok(())
 }
 
-fn get_path_downloads_dir_user(user: &String) -> Result<PathBuf, std::io::Error> {
+fn get_path_downloads_dir_user(user: &str) -> Result<PathBuf, std::io::Error> {
     let mut path = config::get_path_dir_downloads()?;
     path.push(user);
-    return Ok(path);
+    Ok(path)
 }
 
-fn delete_queue_file(path: &PathBuf) -> Result<(), std::io::Error> {
+fn delete_queue_file(path: &Path) -> Result<(), std::io::Error> {
     fs::remove_file(path)?;
-    return Ok(());
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -425,13 +416,13 @@ impl SingleDownloader {
     ) -> SingleDownloader {
         let download_queue = VecDeque::new();
 
-        return SingleDownloader {
+        SingleDownloader {
             receiver,
             private_id_bytes,
             shared_user,
             path_queue_file,
             download_queue,
-            is_downloading_paused: is_downloading_paused,
+            is_downloading_paused,
             stop_downloading: false,
             app_sender,
             active_download_path: None,
@@ -439,7 +430,7 @@ impl SingleDownloader {
             active_downloaded_current_bytes: 0,
             active_download_local_path: None,
             shutdown: false,
-        };
+        }
     }
 
     // Errors that can't recover: Parsing IP
@@ -454,6 +445,7 @@ impl SingleDownloader {
     //  eg, if an IP fails to parse it'll all just start again anyway
     //      Auto block? Show error in UI?
     // Error -> An "unexpected" return. Eg bad file path
+    #[allow(clippy::while_let_loop)]
     pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
         self.app_sender.send(AppAggMessage::LogInfo(format!(
             "Start downloading from '{}'",
@@ -468,7 +460,7 @@ impl SingleDownloader {
             .to_str()
             .unwrap()
             .to_string();
-        root_download_dir.push_str("/");
+        root_download_dir.push('/');
 
         // TODO the inner loop logic in a function that will loop and handle errors to prevent the outer thread loop from restarting the above code?
         loop {
@@ -542,7 +534,7 @@ impl SingleDownloader {
             }
 
             let files_str = std::str::from_utf8(&json_bytes)?;
-            let mut everything_file: SharedFile = serde_json::from_str(&files_str)?;
+            let mut everything_file: SharedFile = serde_json::from_str(files_str)?;
 
             remove_invalid_files(&mut everything_file);
 
@@ -605,22 +597,22 @@ impl SingleDownloader {
             }
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn download_shared_file(
         &mut self,
         encrypted_stream: &mut EncryptedStream,
         shared_file: &SharedFile,
-        root_download_dir: &String,
-        download_dir: &String,
+        root_download_dir: &str,
+        download_dir: &str,
     ) -> Result<(), Box<dyn Error>> {
         let current_path_name = get_sanitized_disk_file_name(shared_file)?;
 
         if shared_file.is_directory {
             let mut new_download_dir = String::from(download_dir);
             new_download_dir.push_str(&current_path_name);
-            new_download_dir.push_str("\\");
+            new_download_dir.push('\\');
             for a_file in &shared_file.files {
                 self.download_shared_file(
                     encrypted_stream,
@@ -637,7 +629,7 @@ impl SingleDownloader {
         } else {
             // Create directory for file download
             fs::create_dir_all(&download_dir)?;
-            let mut destination_path = download_dir.clone();
+            let mut destination_path = download_dir.to_string();
             destination_path.push_str(&current_path_name);
             println!("Saving to: {}", destination_path);
 
@@ -651,7 +643,7 @@ impl SingleDownloader {
                 file_length = 0;
             }
             let mut file_continue_payload = file_length.to_be_bytes().to_vec();
-            file_continue_payload.extend_from_slice(&shared_file.path.as_bytes());
+            file_continue_payload.extend_from_slice(shared_file.path.as_bytes());
             selection_msg = MSG_FILE_SELECTION_CONTINUE;
             selection_payload = file_continue_payload;
             encrypted_stream.write(selection_msg, &selection_payload)?;
@@ -669,7 +661,8 @@ impl SingleDownloader {
                 return Err(format!(
                     "{} Initial file download unexpected msg {}",
                     self.shared_user.nickname, remote_message
-                ))?;
+                )
+                .into());
             }
 
             // Valid file, download it
@@ -694,7 +687,7 @@ impl SingleDownloader {
                 current_downloaded_bytes += payload_bytes.len();
                 self.active_downloaded_current_bytes += payload_bytes.len() as u64;
 
-                f.write(&payload_bytes)?;
+                f.write_all(&payload_bytes)?;
 
                 self.app_update_in_progress()?;
 
@@ -714,12 +707,13 @@ impl SingleDownloader {
                     return Err(format!(
                         "{} Mid file download unexpected msg {}",
                         self.shared_user.nickname, remote_message
-                    ))?;
+                    )
+                    .into());
                 }
             }
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn read_receiver(&mut self) -> Result<(), Box<dyn Error>> {
@@ -819,7 +813,7 @@ impl SingleDownloader {
                 },
                 Err(e) => match e {
                     mpsc::TryRecvError::Empty => return Ok(()),
-                    mpsc::TryRecvError::Disconnected => return Err(ERR_REC_DISCONNECTED)?,
+                    mpsc::TryRecvError::Disconnected => return Err(ERR_REC_DISCONNECTED.into()),
                 },
             }
         }
@@ -834,7 +828,7 @@ impl SingleDownloader {
         };
         self.app_sender.send(AppAggMessage::Offline(i))?;
 
-        return Ok(());
+        Ok(())
     }
 
     fn app_update_in_progress(&self) -> Result<(), Box<dyn Error>> {
@@ -843,32 +837,32 @@ impl SingleDownloader {
             path: self.active_download_path.clone(),
             percent: ((self.active_downloaded_current_bytes as f64
                 / self.active_download_size as f64)
-                * (100 as f64)) as u64,
+                * 100_f64) as u64,
             download_queue: self.get_queue_without_active(),
             path_local_disk: self.active_download_local_path.clone(),
         };
         self.app_sender.send(AppAggMessage::InProgress(i))?;
 
-        return Ok(());
+        Ok(())
     }
 
     fn app_update_completed(
         &self,
-        path: &String,
+        path: &str,
         path_local_disk: String,
     ) -> Result<(), Box<dyn Error>> {
         let i = CompletedMessage {
             nickname: self.shared_user.nickname.clone(),
-            path: path.clone(),
+            path: path.to_string(),
             download_queue: self.get_queue_without_active(),
-            path_local_disk: path_local_disk.clone(),
+            path_local_disk,
         };
         self.app_sender.send(AppAggMessage::Completed(i))?;
 
-        return Ok(());
+        Ok(())
     }
 
-    fn app_update_invalid_file(&self, path: &String) -> Result<(), Box<dyn Error>> {
+    fn app_update_invalid_file(&self, path: &str) -> Result<(), Box<dyn Error>> {
         let i = InvalidFileMessage {
             nickname: self.shared_user.nickname.clone(),
             active_path: self.active_download_path.clone(),
@@ -877,7 +871,7 @@ impl SingleDownloader {
         };
         self.app_sender.send(AppAggMessage::InvalidFile(i))?;
 
-        return Ok(());
+        Ok(())
     }
 
     fn get_queue_without_active(&self) -> VecDeque<String> {
@@ -887,7 +881,7 @@ impl SingleDownloader {
             None => {}
         }
 
-        return queue;
+        queue
     }
 
     fn initialize_download_queue(&mut self) -> Result<(), Box<dyn Error>> {
@@ -896,12 +890,12 @@ impl SingleDownloader {
 
         for mut line in contents.lines() {
             line = line.trim();
-            if line != "" {
+            if !line.is_empty() {
                 self.download_queue.push_back(line.to_string());
             }
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn write_queue(&self) -> Result<(), Box<dyn Error>> {
@@ -916,9 +910,9 @@ impl SingleDownloader {
             .create(true)
             .truncate(true)
             .open(&self.path_queue_file)?;
-        f.write(write_string.as_bytes())?;
+        f.write_all(write_string.as_bytes())?;
 
-        return Ok(());
+        Ok(())
     }
 }
 
@@ -932,13 +926,13 @@ fn get_sanitized_disk_file_name(shared_file: &SharedFile) -> Result<String, Box<
         .unwrap()
         .to_string();
 
-    return Ok(current_path_name);
+    Ok(current_path_name)
 }
 
-fn sanitize_disk_path(path: &String) -> Result<String, Box<dyn Error>> {
+fn sanitize_disk_path(path: &str) -> Result<String, Box<dyn Error>> {
     let mut counter = 0;
     let max_attempts = 10;
-    let original_path = path.clone();
+    let original_path = path.to_string();
     let mut compare_path = original_path.clone();
     let mut new_path = compare_path.clone();
 
@@ -965,5 +959,6 @@ fn sanitize_disk_path(path: &String) -> Result<String, Box<dyn Error>> {
     return Err(format!(
         "Path could not be sanitized after {} tries. {}",
         max_attempts, original_path
-    ))?;
+    )
+    .into());
 }

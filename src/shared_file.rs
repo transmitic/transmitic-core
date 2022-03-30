@@ -28,13 +28,13 @@ pub struct SharedFile {
 impl SharedFile {
     pub fn new(path: String, is_directory: bool, files: Vec<SharedFile>, file_size: u64) -> Self {
         let size_string = get_file_size_string(file_size);
-        return SharedFile {
-            path: path,
-            is_directory: is_directory,
-            files: files,
-            file_size: file_size,
-            size_string: size_string,
-        };
+        SharedFile {
+            path,
+            is_directory,
+            files,
+            file_size,
+            size_string,
+        }
     }
 
     // TODO added because I couldn't easily get big ints into the UI with the existing structure.
@@ -55,7 +55,7 @@ pub fn remove_invalid_files(shared_file: &mut SharedFile) {
     }
 }
 
-pub fn print_shared_files(shared_file: &SharedFile, spacer: &String) {
+pub fn print_shared_files(shared_file: &SharedFile, spacer: &str) {
     let mut ftype = "file";
     if shared_file.is_directory {
         ftype = "dir";
@@ -66,10 +66,10 @@ pub fn print_shared_files(shared_file: &SharedFile, spacer: &String) {
         spacer, shared_file.path, shared_file.size_string, ftype
     );
     if shared_file.is_directory {
-        let mut new_spacer = spacer.clone();
+        let mut new_spacer = spacer.to_string();
         new_spacer.push_str("    ");
         for sub_file in &shared_file.files {
-            print_shared_files(&sub_file, &new_spacer);
+            print_shared_files(sub_file, &new_spacer);
         }
     }
 }
@@ -101,8 +101,6 @@ fn get_file_size_string(mut bytes: u64) -> String {
     }
 
     let size = bytes as f64 / divisor as f64;
-    let mut size_string = String::from(format!("{:.2}", size));
-    size_string.push_str(" ");
-    size_string.push_str(&unit);
-    return size_string;
+    let size_string = format!("{:.2} {}", size, &unit);
+    size_string
 }
