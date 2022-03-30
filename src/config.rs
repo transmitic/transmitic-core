@@ -5,6 +5,7 @@ use std::fs::metadata;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 
 extern crate base64;
 use ring::signature;
@@ -12,6 +13,7 @@ use ring::signature::Ed25519KeyPair;
 use ring::signature::KeyPair;
 use serde::{Deserialize, Serialize};
 
+use crate::app_aggregator::AppAggMessage;
 use crate::crypto;
 use crate::shared_file::SharedFile;
 
@@ -596,7 +598,7 @@ fn read_config() -> Result<ConfigFile, Box<dyn Error>> {
 }
 
 // TODO move into config?
-pub fn get_everything_file(config: &Config, nickname: &String) -> Result<SharedFile, Box<dyn Error>> {
+pub fn get_everything_file(app_sender: &Sender<AppAggMessage>, config: &Config, nickname: &String) -> Result<SharedFile, Box<dyn Error>> {
     // The "root" everything directory
     let mut everything_file = SharedFile::new(
         "everything/".to_string(),
@@ -612,10 +614,17 @@ pub fn get_everything_file(config: &Config, nickname: &String) -> Result<SharedF
         }
 
         let path: String = file.path.clone();
-        let is_directory: bool = match metadata(&path) {
-            Ok(data) => data.is_dir(),
-            Err(e) => return Err(Box::new(e)),
+        // Check existence. Skip if missing.
+        // TODO make an app error so it's known the file is missing for transfers
+        let meta_data = match metadata(&path) {
+            Ok(m) => m,
+            Err(e) => {
+                app_sender.send(AppAggMessage::LogError(format!("Path unable to share. Fix issue or stop sharing file. '{}'. {}", path, e.to_string())))?;
+                continue;
+            },
         };
+
+        let is_directory = meta_data.is_dir();
 
         let mut file_size: u64 = 0; // directory size calculated by all files
         if is_directory == false {

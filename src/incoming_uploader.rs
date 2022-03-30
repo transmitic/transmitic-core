@@ -312,7 +312,7 @@ impl SingleUploader {
         let mut transmitic_stream = TransmiticStream::new(stream.try_clone()?, shared_user.clone(), self.config.get_local_private_id_bytes());
         let mut encrypted_stream = transmitic_stream.wait_for_incoming()?;
 
-        let everything_file = get_everything_file(&self.config, &shared_user.nickname)?;
+        let everything_file = get_everything_file(&self.app_sender, &self.config, &shared_user.nickname)?;
         let everything_file_json: String = serde_json::to_string(&everything_file)?;
         let everything_file_json_bytes = everything_file_json.as_bytes().to_vec();
  
