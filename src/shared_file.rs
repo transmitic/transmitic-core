@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::config::file_contains_only_valid_chars;
 
@@ -34,7 +34,7 @@ impl SharedFile {
             files: files,
             file_size: file_size,
             size_string: size_string,
-        }
+        };
     }
 
     // TODO added because I couldn't easily get big ints into the UI with the existing structure.
@@ -46,7 +46,9 @@ impl SharedFile {
 
 pub fn remove_invalid_files(shared_file: &mut SharedFile) {
     if shared_file.is_directory {
-        shared_file.files.retain(|x|file_contains_only_valid_chars(&x.path));
+        shared_file
+            .files
+            .retain(|x| file_contains_only_valid_chars(&x.path));
         for s in shared_file.files.iter_mut() {
             remove_invalid_files(s);
         }

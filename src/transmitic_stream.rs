@@ -1,28 +1,38 @@
-use std::{net::{TcpStream}, io::{Write, Read}, error::Error};
+use std::{
+    error::Error,
+    io::{Read, Write},
+    net::TcpStream,
+};
 
 use rand_core::OsRng;
 use ring::signature;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-use crate::{core_consts::{TRAN_MAGIC_NUMBER, TRAN_API_MAJOR, TRAN_API_MINOR}, config::SharedUser, crypto, encrypted_stream::EncryptedStream};
+use crate::{
+    config::SharedUser,
+    core_consts::{TRAN_API_MAJOR, TRAN_API_MINOR, TRAN_MAGIC_NUMBER},
+    crypto,
+    encrypted_stream::EncryptedStream,
+};
 
 const BUFFER_SIZE: usize = 32 + 64;
-
 
 // TODO drop struct and just use functions instead?
 pub struct TransmiticStream {
     stream: TcpStream,
     shared_user: SharedUser,
-    private_key_pair:  signature::Ed25519KeyPair,
+    private_key_pair: signature::Ed25519KeyPair,
 }
 
 impl TransmiticStream {
-
-    pub fn new(stream: TcpStream, shared_user: SharedUser, private_id_bytes:  Vec<u8>) -> TransmiticStream {
-
+    pub fn new(
+        stream: TcpStream,
+        shared_user: SharedUser,
+        private_id_bytes: Vec<u8>,
+    ) -> TransmiticStream {
         // TODO function
         let private_key_pair =
-        signature::Ed25519KeyPair::from_pkcs8(private_id_bytes.as_ref()).unwrap();
+            signature::Ed25519KeyPair::from_pkcs8(private_id_bytes.as_ref()).unwrap();
 
         stream.set_nonblocking(false).unwrap();
 
@@ -30,8 +40,7 @@ impl TransmiticStream {
             stream: stream,
             shared_user,
             private_key_pair,
-        }
-
+        };
     }
 
     pub fn connect(&mut self) -> Result<EncryptedStream, Box<dyn Error>> {
@@ -54,7 +63,10 @@ impl TransmiticStream {
         return Ok(encrypted_stream);
     }
 
-    fn get_encrypted_stream(&self, encryption_key: [u8; 32]) -> Result<EncryptedStream, Box<dyn Error>> {
+    fn get_encrypted_stream(
+        &self,
+        encryption_key: [u8; 32],
+    ) -> Result<EncryptedStream, Box<dyn Error>> {
         // TODO can i shutdown the original stream?
         let cloned_stream = self.stream.try_clone()?;
         let encrypted_stream = EncryptedStream::new(cloned_stream, encryption_key);
@@ -76,11 +88,18 @@ impl TransmiticStream {
         self.stream.read_exact(&mut buffer)?;
 
         if buffer[0..4] != TRAN_MAGIC_NUMBER {
-            return Err(format!("{} TRAN MAGIC NUMBER mismatch. {:?}", self.shared_user.nickname, &buffer[0..4]))?;
+            return Err(format!(
+                "{} TRAN MAGIC NUMBER mismatch. {:?}",
+                self.shared_user.nickname,
+                &buffer[0..4]
+            ))?;
         }
 
         if buffer[4] != TRAN_API_MAJOR {
-            return Err(format!("{} TRAN API MAJOR mismatch. {}", self.shared_user.nickname, &buffer[4]))?;
+            return Err(format!(
+                "{} TRAN API MAJOR mismatch. {}",
+                self.shared_user.nickname, &buffer[4]
+            ))?;
         }
 
         return Ok(());
@@ -90,7 +109,8 @@ impl TransmiticStream {
         let local_diffie_secret = EphemeralSecret::new(OsRng);
         let local_diffie_public = PublicKey::from(&local_diffie_secret);
         let local_diffie_public_bytes: &[u8; 32] = local_diffie_public.as_bytes();
-        let local_diffie_signature_public_bytes = self.private_key_pair.sign(local_diffie_public_bytes);
+        let local_diffie_signature_public_bytes =
+            self.private_key_pair.sign(local_diffie_public_bytes);
         let local_diffie_signed_public_bytes = local_diffie_signature_public_bytes.as_ref();
         // diffie public key + diffie public key signed
         let mut buffer = [0; BUFFER_SIZE];
@@ -115,32 +135,34 @@ impl TransmiticStream {
         remote_diffie_signed_public_bytes[..].copy_from_slice(&buffer[32..BUFFER_SIZE]);
 
         // Load PublicID from shared_user
-        let remote_public_id_bytes = crypto::get_bytes_from_base64_str(&self.shared_user.public_id)?;
+        let remote_public_id_bytes =
+            crypto::get_bytes_from_base64_str(&self.shared_user.public_id)?;
         let remote_public_key =
-		signature::UnparsedPublicKey::new(&signature::ED25519, remote_public_id_bytes);
+            signature::UnparsedPublicKey::new(&signature::ED25519, remote_public_id_bytes);
 
         // Verify diffie bytes were signed with the PublicID we have for this user
-        match remote_public_key
-		.verify(
-			&remote_diffie_public_bytes,
-			&remote_diffie_signed_public_bytes,
-		) {
-            Ok(_) => {},
+        match remote_public_key.verify(
+            &remote_diffie_public_bytes,
+            &remote_diffie_signed_public_bytes,
+        ) {
+            Ok(_) => {}
             Err(e) => {
                 return Err(format!("Remote ID does not match. {}", e.to_string()))?;
-            },
             }
-        
+        }
+
         // Create the diffie public key now that it's been verified
         let remote_diffie_public_key = PublicKey::from(remote_diffie_public_bytes);
         return Ok(remote_diffie_public_key);
-
     }
 
-    fn get_encryption_key(&self, local_diffie_secret: EphemeralSecret, remote_diffie_public_key: PublicKey) -> [u8; 32] {
+    fn get_encryption_key(
+        &self,
+        local_diffie_secret: EphemeralSecret,
+        remote_diffie_public_key: PublicKey,
+    ) -> [u8; 32] {
         let local_shared_secret = local_diffie_secret.diffie_hellman(&remote_diffie_public_key);
         let encryption_key = local_shared_secret.as_bytes();
         return *encryption_key;
     }
-
 }

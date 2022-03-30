@@ -1,20 +1,29 @@
-use std::{error::Error, sync::{Arc, RwLock}, collections::{HashMap, VecDeque}, path::PathBuf};
+use std::{
+    collections::{HashMap, VecDeque},
+    error::Error,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 
 extern crate x25519_dalek;
-use ring::{
-	signature::{self},
-};
-use serde::{Serialize, Deserialize};
+use ring::signature::{self};
+use serde::{Deserialize, Serialize};
 
-use crate::{config::{self, Config, ConfigSharedFile, SharedUser}, outgoing_downloader::{OutgoingDownloader}, incoming_uploader::{IncomingUploader, SharingState}, shared_file::{SelectedDownload, RefreshData}, app_aggregator::{AppAggMessage, CompletedMessage, run_app_loop}};
+use crate::{
+    app_aggregator::{run_app_loop, AppAggMessage, CompletedMessage},
+    config::{self, Config, ConfigSharedFile, SharedUser},
+    incoming_uploader::{IncomingUploader, SharingState},
+    outgoing_downloader::OutgoingDownloader,
+    shared_file::{RefreshData, SelectedDownload},
+};
 
 // TODO
 //  https://doc.rust-lang.org/std/sync/struct.BarrierWaitResult.html
 //  https://doc.rust-lang.org/std/sync/struct.Condvar.html
 
 pub struct LocalKeyData {
-	pub local_key_pair: signature::Ed25519KeyPair,
-	pub local_key_pair_bytes: Vec<u8>,
+    pub local_key_pair: signature::Ed25519KeyPair,
+    pub local_key_pair_bytes: Vec<u8>,
 }
 
 pub struct TransmiticCore {
@@ -26,10 +35,6 @@ pub struct TransmiticCore {
     download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
 }
-
-
-
-
 
 // TODO stream connect timeout
 //  review stream, try_clone, set nonblocking
@@ -61,7 +66,6 @@ pub struct SingleDownloadState {
 
 impl SingleDownloadState {
     pub fn new() -> SingleDownloadState {
-
         return SingleDownloadState {
             active_download_path: None,
             active_download_percent: 0,
@@ -70,15 +74,14 @@ impl SingleDownloadState {
             invalid_downloads: Vec::new(),
             completed_downloads: Vec::new(),
             is_online: true,
-        }
+        };
     }
 }
 
-// TODO inconsistent naming: 
+// TODO inconsistent naming:
 //  active download VS in progress
 //  owner vs nickname
 impl TransmiticCore {
-
     pub fn new() -> Result<TransmiticCore, Box<dyn Error>> {
         let config = Config::new()?;
         let is_first_start = config.is_first_start();
@@ -118,13 +121,24 @@ impl TransmiticCore {
         return Ok(());
     }
 
-    pub fn add_new_user(&mut self, new_nickname: String, new_public_id: String, new_ip: String, new_port: String) -> Result<(), Box<dyn Error>> {
-        self.config.add_new_user(new_nickname, new_public_id, new_ip, new_port)?;
+    pub fn add_new_user(
+        &mut self,
+        new_nickname: String,
+        new_public_id: String,
+        new_ip: String,
+        new_port: String,
+    ) -> Result<(), Box<dyn Error>> {
+        self.config
+            .add_new_user(new_nickname, new_public_id, new_ip, new_port)?;
         self.incoming_uploader.set_new_config(self.config.clone());
         return Ok(());
     }
 
-    pub fn add_user_to_shared(&mut self, nickname: String, file_path: String) -> Result<(), Box<dyn Error>> {
+    pub fn add_user_to_shared(
+        &mut self,
+        nickname: String,
+        file_path: String,
+    ) -> Result<(), Box<dyn Error>> {
         self.config.add_user_to_shared(nickname, file_path)?;
         self.incoming_uploader.set_new_config(self.config.clone());
         return Ok(());
@@ -134,7 +148,8 @@ impl TransmiticCore {
         self.config.create_new_id()?;
         self.incoming_uploader.set_new_config(self.config.clone());
         self.outgoing_downloader.set_new_config(self.config.clone());
-        self.outgoing_downloader.set_new_private_id(self.config.get_local_private_id_bytes());
+        self.outgoing_downloader
+            .set_new_private_id(self.config.get_local_private_id_bytes());
         return Ok(());
     }
 
@@ -143,7 +158,8 @@ impl TransmiticCore {
     }
 
     pub fn downloads_cancel_single(&mut self, nickname: String, file_path: String) {
-        self.outgoing_downloader.downloads_cancel_single(nickname, file_path);
+        self.outgoing_downloader
+            .downloads_cancel_single(nickname, file_path);
     }
 
     pub fn downloads_resume_all(&mut self) {
@@ -168,7 +184,10 @@ impl TransmiticCore {
         }
     }
 
-    pub fn download_selected(&mut self, downloads: Vec<SelectedDownload>) -> Result<(), Box<dyn Error>> {
+    pub fn download_selected(
+        &mut self,
+        downloads: Vec<SelectedDownload>,
+    ) -> Result<(), Box<dyn Error>> {
         self.outgoing_downloader.download_selected(downloads)?;
         return Ok(());
     }
@@ -225,7 +244,11 @@ impl TransmiticCore {
         return Ok(());
     }
 
-    pub fn remove_user_from_sharing(&mut self, nickname: String, file_path: String) -> Result<(), Box<dyn Error>> {
+    pub fn remove_user_from_sharing(
+        &mut self,
+        nickname: String,
+        file_path: String,
+    ) -> Result<(), Box<dyn Error>> {
         self.config.remove_user_from_sharing(nickname, file_path)?;
         self.incoming_uploader.set_new_config(self.config.clone());
         return Ok(());
@@ -240,31 +263,47 @@ impl TransmiticCore {
     }
 
     pub fn set_my_sharing_state(&mut self, sharing_state: SharingState) {
-        self.incoming_uploader.set_my_sharing_state(sharing_state.clone());
+        self.incoming_uploader
+            .set_my_sharing_state(sharing_state.clone());
         self.sharing_state = sharing_state;
     }
 
-    pub fn set_user_is_allowed_state(&mut self, nickname: String, is_allowed: bool) -> Result<(), Box<dyn Error>> {
-        self.config.set_user_is_allowed_state(nickname, is_allowed)?;
+    pub fn set_user_is_allowed_state(
+        &mut self,
+        nickname: String,
+        is_allowed: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        self.config
+            .set_user_is_allowed_state(nickname, is_allowed)?;
         self.incoming_uploader.set_new_config(self.config.clone());
         return Ok(());
     }
 
-    pub fn update_user(&mut self, nickname: String, new_public_id: String, new_ip: String, new_port: String) -> Result<(), Box<dyn Error>> {
+    pub fn update_user(
+        &mut self,
+        nickname: String,
+        new_public_id: String,
+        new_ip: String,
+        new_port: String,
+    ) -> Result<(), Box<dyn Error>> {
         // TODO support updating the nickanme
         // Need to pull existing name and public id from UI and new nickname and public id
-        // If nickname changes, need to write config, stop existing download, wait for existing download to stop, 
+        // If nickname changes, need to write config, stop existing download, wait for existing download to stop,
         //  change name of download folder, then allow update_user function to return.
 
-        self.config.update_user(nickname.clone(), new_public_id.clone(), new_ip.clone(), new_port.clone())?;
+        self.config.update_user(
+            nickname.clone(),
+            new_public_id.clone(),
+            new_ip.clone(),
+            new_port.clone(),
+        )?;
         self.incoming_uploader.set_new_config(self.config.clone());
         self.outgoing_downloader.set_new_config(self.config.clone());
         self.outgoing_downloader.update_user(&nickname)?;
         return Ok(());
     }
 
-    pub fn get_downloads_dir(&self) -> Result<PathBuf, std::io::Error>  {
+    pub fn get_downloads_dir(&self) -> Result<PathBuf, std::io::Error> {
         return config::get_path_dir_downloads();
     }
-
 }

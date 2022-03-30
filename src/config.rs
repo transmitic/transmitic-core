@@ -46,10 +46,9 @@ struct ConfigFile {
 pub struct Config {
     first_start: bool,
     config_file: ConfigFile,
-	local_private_key_bytes: Vec<u8>,
+    local_private_key_bytes: Vec<u8>,
     path_dir_config: PathBuf,
 }
-
 
 // TODO Config is passed around and has methods that should NOT be allowed to be called everywhere
 impl Config {
@@ -58,9 +57,15 @@ impl Config {
         let first_start = init_config()?;
         let config_file = read_config()?;
         let path_dir_config = get_path_transmitic_config_dir()?;
-        let local_private_key_bytes = crypto::get_bytes_from_base64_str(&config_file.my_private_id)?;
+        let local_private_key_bytes =
+            crypto::get_bytes_from_base64_str(&config_file.my_private_id)?;
 
-        return Ok(Config { first_start, config_file, local_private_key_bytes, path_dir_config, });
+        return Ok(Config {
+            first_start,
+            config_file,
+            local_private_key_bytes,
+            path_dir_config,
+        });
     }
 
     pub fn add_files(&mut self, files: Vec<String>) -> Result<(), Box<dyn Error>> {
@@ -69,7 +74,7 @@ impl Config {
         for file in new_config_file.shared_files.iter() {
             existing_paths.push(file.path.clone());
         }
-        
+
         for mut file in files {
             if file.starts_with("file://") {
                 file = file[7..].to_string();
@@ -91,7 +96,13 @@ impl Config {
         return Ok(());
     }
 
-    pub fn add_new_user(&mut self, new_nickname: String, new_public_id: String, new_ip: String, new_port: String) -> Result<(), Box<dyn Error>> {
+    pub fn add_new_user(
+        &mut self,
+        new_nickname: String,
+        new_public_id: String,
+        new_ip: String,
+        new_port: String,
+    ) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
         let shared_user = SharedUser {
             public_id: new_public_id,
@@ -106,9 +117,13 @@ impl Config {
         return Ok(());
     }
 
-    pub fn add_user_to_shared(&mut self, nickname: String, file_path: String) -> Result<(), Box<dyn Error>> {
+    pub fn add_user_to_shared(
+        &mut self,
+        nickname: String,
+        file_path: String,
+    ) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
-        
+
         // Is user valid
         let mut is_user_valid = false;
         for shared in &new_config_file.shared_users {
@@ -118,26 +133,35 @@ impl Config {
             }
         }
         if !is_user_valid {
-            return Err(format!("Could not share file '{}'. User '{}' does not exist.", file_path, nickname))?;
+            return Err(format!(
+                "Could not share file '{}'. User '{}' does not exist.",
+                file_path, nickname
+            ))?;
         }
 
         // Add user
         // TODO can I enumerate without ownership issues?
         for i in 0..new_config_file.shared_files.len() {
             if new_config_file.shared_files[i].path == file_path {
-                if !new_config_file.shared_files[i].shared_with.contains(&nickname) {
+                if !new_config_file.shared_files[i]
+                    .shared_with
+                    .contains(&nickname)
+                {
                     new_config_file.shared_files[i].shared_with.push(nickname);
                     self.write_and_set_config(&mut new_config_file)?;
                 }
                 return Ok(());
             }
         }
-        return Err(format!("Could not find file '{}' to share with user '{}'.", file_path, nickname))?;
+        return Err(format!(
+            "Could not find file '{}' to share with user '{}'.",
+            file_path, nickname
+        ))?;
     }
 
     pub fn get_local_key_pair(&self) -> Ed25519KeyPair {
         let local_key_pair =
-        signature::Ed25519KeyPair::from_pkcs8(self.local_private_key_bytes.as_ref()).unwrap();
+            signature::Ed25519KeyPair::from_pkcs8(self.local_private_key_bytes.as_ref()).unwrap();
         return local_key_pair;
     }
 
@@ -148,12 +172,13 @@ impl Config {
     pub fn create_new_id(&mut self) -> Result<(), Box<dyn Error>> {
         let (private_id_bytes, _) = crypto::generate_id_pair()?;
         let private_id_string = base64::encode(private_id_bytes);
-        
+
         let mut new_config_file = self.config_file.clone();
         new_config_file.my_private_id = private_id_string;
         self.write_and_set_config(&mut new_config_file)?;
 
-        let local_private_key_bytes = crypto::get_bytes_from_base64_str(&self.config_file.my_private_id)?;
+        let local_private_key_bytes =
+            crypto::get_bytes_from_base64_str(&self.config_file.my_private_id)?;
         self.local_private_key_bytes = local_private_key_bytes;
 
         return Ok(());
@@ -166,7 +191,7 @@ impl Config {
     pub fn get_public_id_string(&self) -> String {
         let local_key_pair = self.get_local_key_pair();
         let public_id = local_key_pair.public_key().as_ref();
-		let public_id_string = crypto::get_base64_str_from_bytes(public_id.to_vec());
+        let public_id_string = crypto::get_base64_str_from_bytes(public_id.to_vec());
         return public_id_string;
     }
 
@@ -194,12 +219,18 @@ impl Config {
         return Ok(());
     }
 
-    pub fn remove_user_from_sharing(&mut self, nickname: String, file_path: String) -> Result<(), Box<dyn Error>> {
+    pub fn remove_user_from_sharing(
+        &mut self,
+        nickname: String,
+        file_path: String,
+    ) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
 
         for i in 0..new_config_file.shared_files.len() {
             if new_config_file.shared_files[i].path == file_path {
-                new_config_file.shared_files[i].shared_with.retain(|x| x != &nickname);
+                new_config_file.shared_files[i]
+                    .shared_with
+                    .retain(|x| x != &nickname);
             }
         }
 
@@ -210,14 +241,18 @@ impl Config {
 
     pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
-        
+
         // Remove from shared files
         for i in 0..new_config_file.shared_files.len() {
-            new_config_file.shared_files[i].shared_with.retain(|x| x != &nickname);
+            new_config_file.shared_files[i]
+                .shared_with
+                .retain(|x| x != &nickname);
         }
 
         // Remove from shared_users
-        new_config_file.shared_users.retain(|x| x.nickname != nickname);
+        new_config_file
+            .shared_users
+            .retain(|x| x.nickname != nickname);
         self.write_and_set_config(&mut new_config_file)?;
 
         return Ok(());
@@ -231,7 +266,11 @@ impl Config {
         return Ok(());
     }
 
-    pub fn set_user_is_allowed_state(&mut self, nickname: String, is_allowed: bool) -> Result<(), Box<dyn Error>> {
+    pub fn set_user_is_allowed_state(
+        &mut self,
+        nickname: String,
+        is_allowed: bool,
+    ) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
         for user in new_config_file.shared_users.iter_mut() {
             if user.nickname == nickname {
@@ -241,10 +280,19 @@ impl Config {
             }
         }
 
-        return Err(format!("Could not find user '{}' to set Allowed state '{}'.", nickname, is_allowed))?;
+        return Err(format!(
+            "Could not find user '{}' to set Allowed state '{}'.",
+            nickname, is_allowed
+        ))?;
     }
 
-    pub fn update_user(&mut self, nickname: String, new_public_id: String, new_ip: String, new_port: String) -> Result<(), Box<dyn Error>> {
+    pub fn update_user(
+        &mut self,
+        nickname: String,
+        new_public_id: String,
+        new_ip: String,
+        new_port: String,
+    ) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
         for user in new_config_file.shared_users.iter_mut() {
             if user.nickname == nickname {
@@ -255,10 +303,12 @@ impl Config {
                 self.write_and_set_config(&mut new_config_file)?;
                 return Ok(());
             }
-            
         }
-        
-        return Err(format!("Failed to find user '{}'. Could not update user.", nickname))?;
+
+        return Err(format!(
+            "Failed to find user '{}'. Could not update user.",
+            nickname
+        ))?;
     }
 
     fn write_and_set_config(&mut self, config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
@@ -267,7 +317,6 @@ impl Config {
 
         return Ok(());
     }
-
 }
 
 fn create_config_dir() -> Result<(), std::io::Error> {
@@ -347,7 +396,7 @@ fn sanitize_config(config_file: &mut ConfigFile) {
     // trim
     config_file.my_private_id = config_file.my_private_id.trim().to_string();
     config_file.sharing_port = config_file.sharing_port.trim().to_string();
-    
+
     // Sort shared users by nickname
     config_file.shared_users.sort_by_key(|x| x.nickname.clone());
 
@@ -394,9 +443,10 @@ fn verify_config_my_private_id(my_private_id: &String) -> Result<(), Box<dyn Err
 
     match signature::Ed25519KeyPair::from_pkcs8(local_private_key_bytes.as_ref()) {
         Ok(key_pair) => key_pair,
-        Err(e) => {
-            Err(format!("Failed to load local key pair '{}'.", e.to_string()))?
-        },
+        Err(e) => Err(format!(
+            "Failed to load local key pair '{}'.",
+            e.to_string()
+        ))?,
     };
 
     return Ok(());
@@ -423,9 +473,7 @@ pub fn file_contains_only_valid_chars(path: &String) -> bool {
 
     // Remove .. paths, anything relative etc
     let path = Path::new(&path);
-    println!("{:?}", path);
     for part in path.iter() {
-        println!("{:?}", part);
         let mut keep = false;
         let s = part.to_str().unwrap().to_string();
         for c in s.chars() {
@@ -438,7 +486,6 @@ pub fn file_contains_only_valid_chars(path: &String) -> bool {
         if keep == false {
             return false;
         }
-
     }
 
     return true;
@@ -459,16 +506,21 @@ fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<
         }
 
         if user_count > 1 {
-            return Err(format!("Nicknames cannot be repeated. '{}' was found '{}' times.", user.nickname, user_count))?;
+            return Err(format!(
+                "Nicknames cannot be repeated. '{}' was found '{}' times.",
+                user.nickname, user_count
+            ))?;
         }
 
         if public_id_count > 1 {
-            return Err(format!("Public IDs cannot be repeated. '{}' was found '{}' times.", user.public_id, public_id_count))?;
+            return Err(format!(
+                "Public IDs cannot be repeated. '{}' was found '{}' times.",
+                user.public_id, public_id_count
+            ))?;
         }
     }
 
     for user in shared_users {
-
         // Verify nickname
         if user.nickname == "" {
             Err("Nickname cannot be empty.")?;
@@ -484,8 +536,12 @@ fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<
             Err(format!("Port for '{}' cannot be empty", user.nickname))?;
         }
         match verify_config_port(&user.port) {
-            Ok(_) => {},
-            Err(e) => Err(format!("{}'s port is invalid. {}", user.nickname, e.to_string()))?,
+            Ok(_) => {}
+            Err(e) => Err(format!(
+                "{}'s port is invalid. {}",
+                user.nickname,
+                e.to_string()
+            ))?,
         }
 
         // Verify public id
@@ -494,27 +550,40 @@ fn verify_config_shared_users(shared_users: &Vec<SharedUser>) -> Result<(), Box<
         }
         match crypto::get_bytes_from_base64_str(&user.public_id) {
             Ok(public_id) => public_id,
-            Err(e) => Err(format!("{}'s PublicID is invalid. Bad encoding. {}", user.nickname, e.to_string()))?,
+            Err(e) => Err(format!(
+                "{}'s PublicID is invalid. Bad encoding. {}",
+                user.nickname,
+                e.to_string()
+            ))?,
         };
 
         // Verify full ip and port address
         if user.ip == "" {
-            Err(format!("IP Address for '{}' cannot be empty", user.nickname))?;
+            Err(format!(
+                "IP Address for '{}' cannot be empty",
+                user.nickname
+            ))?;
         }
         let full_address = format!("{}:{}", user.ip, user.port);
         let ip_parse: Result<SocketAddr, _> = full_address.parse();
         match ip_parse {
-            Ok(_) => {},
-            Err(e) => Err(format!("Full address of '{}', '{}' is not valid. Check IP and port. {}", user.nickname, full_address, e.to_string()))? ,
+            Ok(_) => {}
+            Err(e) => Err(format!(
+                "Full address of '{}', '{}' is not valid. Check IP and port. {}",
+                user.nickname,
+                full_address,
+                e.to_string()
+            ))?,
         }
-
-
     }
-    
+
     return Ok(());
 }
 
-fn verify_config_shared_files(shared_users: &Vec<SharedUser>, shared_files: &Vec<ConfigSharedFile>) -> Result<(), Box<dyn Error>> {
+fn verify_config_shared_files(
+    shared_users: &Vec<SharedUser>,
+    shared_files: &Vec<ConfigSharedFile>,
+) -> Result<(), Box<dyn Error>> {
     // Check for duplicate files
     for file in shared_files {
         let mut file_count = 0;
@@ -525,7 +594,10 @@ fn verify_config_shared_files(shared_users: &Vec<SharedUser>, shared_files: &Vec
         }
 
         if file_count > 1 {
-            return Err(format!("File '{}' has been shared '{}' times. It can only be shared once.", file.path, file_count))?;
+            return Err(format!(
+                "File '{}' has been shared '{}' times. It can only be shared once.",
+                file.path, file_count
+            ))?;
         }
     }
 
@@ -546,10 +618,16 @@ fn verify_config_shared_files(shared_users: &Vec<SharedUser>, shared_files: &Vec
     // Validate file paths
     let t = get_path_transmitic_config_dir()?;
     let t2 = t.as_os_str();
-    let transmitic_config_dir_path = t2.to_str().ok_or(format!("Failed to convert transmitic config dir path to os str. {:?}", t2))?;
+    let transmitic_config_dir_path = t2.to_str().ok_or(format!(
+        "Failed to convert transmitic config dir path to os str. {:?}",
+        t2
+    ))?;
     for file in shared_files {
         if file.path.starts_with(transmitic_config_dir_path) {
-            return Err(format!("The Transmitic Config directory, and it's sub files, cannot be shared. '{}'", transmitic_config_dir_path))?;
+            return Err(format!(
+                "The Transmitic Config directory, and it's sub files, cannot be shared. '{}'",
+                transmitic_config_dir_path
+            ))?;
         }
 
         for c in get_blocked_file_path_chars().chars() {
@@ -560,52 +638,53 @@ fn verify_config_shared_files(shared_users: &Vec<SharedUser>, shared_files: &Vec
 
         // Reject relative dirs
         if file_contains_only_valid_chars(&file.path) == false {
-            return Err(format!("Cannot share file with relative directories or invalid characters. {}", file.path))?;
+            return Err(format!(
+                "Cannot share file with relative directories or invalid characters. {}",
+                file.path
+            ))?;
         }
-
     }
 
     return Ok(());
 }
 
 fn read_config() -> Result<ConfigFile, Box<dyn Error>> {
-	let config_path = get_path_config_json()?;
-	if !config_path.exists() {
+    let config_path = get_path_config_json()?;
+    if !config_path.exists() {
         let exit_error = format!(
-			"config.json does not exist at '{}'",
-			config_path.to_string_lossy()
-		);
+            "config.json does not exist at '{}'",
+            config_path.to_string_lossy()
+        );
         return Err(exit_error)?;
-	}
+    }
 
-	let config_string = fs::read_to_string(&config_path)?;
-	let mut config_file: ConfigFile;
+    let config_string = fs::read_to_string(&config_path)?;
+    let mut config_file: ConfigFile;
     match serde_json::from_str(&config_string.clone()) {
-		Ok(c) => config_file = c,
-		Err(e) => {
-			let exit_error = format!(
-				"config.json is invalid '{}' -- {}",
-				config_path.to_string_lossy(), e.to_string()
-			);
+        Ok(c) => config_file = c,
+        Err(e) => {
+            let exit_error = format!(
+                "config.json is invalid '{}' -- {}",
+                config_path.to_string_lossy(),
+                e.to_string()
+            );
             return Err(exit_error)?;
-		}
-	};
+        }
+    };
 
     verify_config(&mut config_file)?;
 
     return Ok(config_file);
-
 }
 
 // TODO move into config?
-pub fn get_everything_file(app_sender: &Sender<AppAggMessage>, config: &Config, nickname: &String) -> Result<SharedFile, Box<dyn Error>> {
+pub fn get_everything_file(
+    app_sender: &Sender<AppAggMessage>,
+    config: &Config,
+    nickname: &String,
+) -> Result<SharedFile, Box<dyn Error>> {
     // The "root" everything directory
-    let mut everything_file = SharedFile::new(
-        "everything/".to_string(),
-        true,
-        Vec::new(),
-        0,
-    );
+    let mut everything_file = SharedFile::new("everything/".to_string(), true, Vec::new(), 0);
 
     // Get SharedFiles
     for file in &config.get_shared_files() {
@@ -619,9 +698,13 @@ pub fn get_everything_file(app_sender: &Sender<AppAggMessage>, config: &Config, 
         let meta_data = match metadata(&path) {
             Ok(m) => m,
             Err(e) => {
-                app_sender.send(AppAggMessage::LogError(format!("Path unable to share. Fix issue or stop sharing file. '{}'. {}", path, e.to_string())))?;
+                app_sender.send(AppAggMessage::LogError(format!(
+                    "Path unable to share. Fix issue or stop sharing file. '{}'. {}",
+                    path,
+                    e.to_string()
+                )))?;
                 continue;
-            },
+            }
         };
 
         let is_directory = meta_data.is_dir();
@@ -631,12 +714,8 @@ pub fn get_everything_file(app_sender: &Sender<AppAggMessage>, config: &Config, 
             file_size = metadata(&path)?.len();
         }
 
-        let mut shared_file: SharedFile = SharedFile::new(
-            path,
-            is_directory,
-            Vec::new(),
-            file_size,
-        );
+        let mut shared_file: SharedFile =
+            SharedFile::new(path, is_directory, Vec::new(), file_size);
         let config_dir = match &config.get_path_dir_config().to_str() {
             Some(config_dir) => config_dir.to_string(),
             None => Err("Failed to convert config dir path to String")?,
@@ -651,7 +730,10 @@ pub fn get_everything_file(app_sender: &Sender<AppAggMessage>, config: &Config, 
     return Ok(everything_file);
 }
 
-pub fn process_shared_file(shared_file: &mut SharedFile, config_dir: &String) -> Result<(), Box<dyn Error>> {
+pub fn process_shared_file(
+    shared_file: &mut SharedFile,
+    config_dir: &String,
+) -> Result<(), Box<dyn Error>> {
     if shared_file.is_directory == false {
         return Ok(());
     }
@@ -676,12 +758,8 @@ pub fn process_shared_file(shared_file: &mut SharedFile, config_dir: &String) ->
             if is_directory == false {
                 file_size = metadata(&path_string)?.len();
             }
-            let mut new_shared_file = SharedFile::new(
-                path_string,
-                is_directory,
-          Vec::new(),
-                file_size,
-            );
+            let mut new_shared_file =
+                SharedFile::new(path_string, is_directory, Vec::new(), file_size);
             if is_directory {
                 process_shared_file(&mut new_shared_file, config_dir)?;
             }

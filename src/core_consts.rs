@@ -3,7 +3,6 @@ pub const TRAN_MAGIC_NUMBER: [u8; 4] = ['T' as u8, 'R' as u8, 'A' as u8, '!' as 
 pub const TRAN_API_MAJOR: u8 = 1;
 pub const TRAN_API_MINOR: u16 = 0;
 
-
 // TODO
 // CONNECTION ESTABLISH
 // Are these really needed?
