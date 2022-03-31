@@ -3,18 +3,8 @@ pub const TRAN_MAGIC_NUMBER: [u8; 4] = [b'T', b'R', b'A', b'!'];
 pub const TRAN_API_MAJOR: u8 = 1;
 pub const TRAN_API_MINOR: u16 = 0;
 
-// TODO
-// CONNECTION ESTABLISH
-// Are these really needed?
-// REQUEST is obvious on first connect
-// Anything else is just TCP shutdown
-pub const CONN_ESTABLISH_REQUEST: u16 = 0;
-pub const CONN_ESTABLISH_ACCEPT: u16 = 1;
-pub const CONN_ESTABLISH_REJECT: u16 = 2;
-
 // TODO REORG all
 // TODO ue repr enum below instead?
-
 pub const MSG_TYPE_SIZE: usize = 2;
 pub const PAYLOAD_SIZE_LEN: usize = 4;
 
@@ -28,9 +18,6 @@ pub const MSG_FILE_FINISHED: u16 = 5;
 pub const MSG_FILE_INVALID_FILE: u16 = 6;
 pub const MSG_CANNOT_SELECT_DIRECTORY: u16 = 7;
 pub const MSG_FILE_SELECTION_CONTINUE: u16 = 8; // TODO Only use CONTINUE?
-
-pub const MSG_CLIENT_DIFFIE_PUBLIC: u16 = 9;
-pub const MSG_SERVER_DIFFIE_PUBLIC: u16 = 10;
 
 pub const MAX_DATA_SIZE: usize = 100_000;
 pub const TOTAL_BUFFER_SIZE: usize = MSG_TYPE_SIZE + PAYLOAD_SIZE_LEN + MAX_DATA_SIZE;
