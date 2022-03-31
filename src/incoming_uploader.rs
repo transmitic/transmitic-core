@@ -51,7 +51,7 @@ impl IncomingUploader {
                     std::process::exit(1);
                 }
                 Err(e) => {
-                    eprintln!("UploadManager run failed {}", e.to_string());
+                    eprintln!("UploadManager run failed {}", e);
                     std::process::exit(1);
                 }
             }
@@ -67,7 +67,7 @@ impl IncomingUploader {
         {
             Ok(_) => {}
             Err(e) => {
-                eprintln!("UploadManager sender failed {}", e.to_string());
+                eprintln!("UploadManager sender failed {}", e);
                 std::process::exit(1);
             }
         }
@@ -80,7 +80,7 @@ impl IncomingUploader {
         {
             Ok(_) => {}
             Err(e) => {
-                eprintln!("UploadManager sender failed {}", e.to_string());
+                eprintln!("UploadManager sender failed {}", e);
                 std::process::exit(1);
             }
         }
@@ -175,8 +175,7 @@ impl UploaderManager {
                                         thread_app_sender
                                             .send(AppAggMessage::LogDebug(format!(
                                                 "Uploader run error. {} - {}",
-                                                ip,
-                                                e.to_string()
+                                                ip, e
                                             )))
                                             .unwrap();
                                     }
@@ -205,7 +204,7 @@ impl UploaderManager {
                     Err(e) => {
                         self.app_sender.send(AppAggMessage::LogDebug(format!(
                             "Failed initial client connection {}",
-                            e.to_string()
+                            e
                         )))?;
                         continue;
                     }
@@ -407,12 +406,10 @@ impl SingleUploader {
             let mut payload_bytes: Vec<u8> = Vec::new();
             payload_bytes.extend_from_slice(encrypted_stream.get_payload()?);
 
-            let file_seek_point: u64;
-            let client_file_choice: &str;
             let mut seek_bytes: [u8; 8] = [0; 8];
             seek_bytes.copy_from_slice(&payload_bytes[0..8]);
-            file_seek_point = u64::from_be_bytes(seek_bytes);
-            client_file_choice = std::str::from_utf8(&payload_bytes[8..])?;
+            let file_seek_point: u64 = u64::from_be_bytes(seek_bytes);
+            let client_file_choice: &str = std::str::from_utf8(&payload_bytes[8..])?;
 
             self.app_sender.send(AppAggMessage::LogDebug(format!(
                 "'{}' chose file '{}' at seek point '{}'",
@@ -505,8 +502,7 @@ impl SingleUploader {
         } else {
             return Err(format!(
                 "'{}' Invalid client selection '{}'",
-                self.nickname,
-                client_message.to_string()
+                self.nickname, client_message
             )
             .into());
         }
@@ -531,8 +527,7 @@ impl SingleUploader {
                         self.should_shutdown = true;
                         self.app_sender.send(AppAggMessage::LogInfo(format!(
                             "Receiver disconnected '{}' '{}'",
-                            self.nickname,
-                            e.to_string()
+                            self.nickname, e
                         )))?;
                         return Ok(());
                     }

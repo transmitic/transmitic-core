@@ -149,7 +149,7 @@ impl TransmiticStream {
         ) {
             Ok(_) => {}
             Err(e) => {
-                return Err(format!("Remote ID does not match. {}", e.to_string()).into());
+                return Err(format!("Remote ID does not match. {}", e).into());
             }
         }
 

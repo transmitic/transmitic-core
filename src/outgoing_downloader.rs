@@ -112,8 +112,7 @@ impl OutgoingDownloader {
                                 thread_app_sender
                                     .send(AppAggMessage::LogDebug(format!(
                                         "Downloader run error. {} - {}",
-                                        nickname,
-                                        e.to_string()
+                                        nickname, e
                                     )))
                                     .unwrap();
                             }
@@ -354,7 +353,7 @@ impl OutgoingDownloader {
 
         remove_invalid_files(&mut everything_file);
 
-        print_shared_files(&everything_file, &"".to_string());
+        print_shared_files(&everything_file, "");
 
         Ok(everything_file)
     }
@@ -538,7 +537,7 @@ impl SingleDownloader {
 
             remove_invalid_files(&mut everything_file);
 
-            print_shared_files(&everything_file, &"".to_string());
+            print_shared_files(&everything_file, "");
 
             loop {
                 let path_active_download = match self.download_queue.get(0) {
@@ -634,18 +633,17 @@ impl SingleDownloader {
             println!("Saving to: {}", destination_path);
 
             // Send selection to server
-            let selection_msg: u16;
-            let selection_payload: Vec<u8>;
-            let file_length: u64;
-            if Path::new(&destination_path).exists() {
-                file_length = metadata(&destination_path)?.len();
+
+            let file_length: u64 = if Path::new(&destination_path).exists() {
+                metadata(&destination_path)?.len()
             } else {
-                file_length = 0;
-            }
+                0
+            };
+
             let mut file_continue_payload = file_length.to_be_bytes().to_vec();
             file_continue_payload.extend_from_slice(shared_file.path.as_bytes());
-            selection_msg = MSG_FILE_SELECTION_CONTINUE;
-            selection_payload = file_continue_payload;
+            let selection_msg: u16 = MSG_FILE_SELECTION_CONTINUE;
+            let selection_payload: Vec<u8> = file_continue_payload;
             encrypted_stream.write(selection_msg, &selection_payload)?;
 
             // Check first response for error
@@ -941,7 +939,7 @@ fn sanitize_disk_path(path: &str) -> Result<String, Box<dyn Error>> {
         compare_path = new_path.clone();
 
         // Replace null bytes
-        new_path = new_path.replace("\0", "0");
+        new_path = new_path.replace('\0', "0");
         if new_path != compare_path {
             continue;
         }

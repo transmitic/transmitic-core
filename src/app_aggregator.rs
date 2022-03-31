@@ -76,7 +76,7 @@ fn app_loop(
         let msg = match receiver.recv() {
             Ok(msg) => msg,
             Err(e) => {
-                eprintln!("AppLoopRec failed. {}", e.to_string());
+                eprintln!("AppLoopRec failed. {}", e);
                 std::process::exit(ExitCodes::AppLoopRecFailed as i32)
             }
         };

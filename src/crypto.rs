@@ -11,12 +11,12 @@ pub fn generate_id_pair() -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
     let rng = rand::SystemRandom::new();
     let pkcs8_bytes = match signature::Ed25519KeyPair::generate_pkcs8(&rng) {
         Ok(pkcs8_bytes) => pkcs8_bytes,
-        Err(e) => return Err(format!("Failed to generate pkcs8 bytes. {}", e.to_string()).into()),
+        Err(e) => return Err(format!("Failed to generate pkcs8 bytes. {}", e).into()),
     };
 
     let key_pair = match signature::Ed25519KeyPair::from_pkcs8(pkcs8_bytes.as_ref()) {
         Ok(key_pair) => key_pair,
-        Err(e) => return Err(format!("Key Pair rejected. {}", e.to_string()).into()),
+        Err(e) => return Err(format!("Key Pair rejected. {}", e).into()),
     };
 
     let public_key_bytes = key_pair.public_key().as_ref();

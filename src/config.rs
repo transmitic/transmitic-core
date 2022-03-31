@@ -79,7 +79,7 @@ impl Config {
             if file.starts_with("file://") {
                 file = file[7..].to_string();
             }
-            file = file.replace("/", "\\");
+            file = file.replace('/', "\\");
             // File already shared, don't readd it
             if existing_paths.contains(&file) {
                 continue;
@@ -418,7 +418,7 @@ fn sanitize_config(config_file: &mut ConfigFile) {
             file.path = file.path[7..].to_string();
         }
 
-        file.path = file.path.replace("/", "\\");
+        file.path = file.path.replace('/', "\\");
 
         for i in 0..file.shared_with.len() {
             file.shared_with[i] = file.shared_with[i].trim().to_string();
@@ -438,12 +438,12 @@ fn verify_config_port(port: &str) -> Result<(), Box<dyn Error>> {
 fn verify_config_my_private_id(my_private_id: &str) -> Result<(), Box<dyn Error>> {
     let local_private_key_bytes = match crypto::get_bytes_from_base64_str(my_private_id) {
         Ok(local_private_key_bytes) => local_private_key_bytes,
-        Err(e) => return Err(format!("Invalid Private ID. Not b64. {}", e.to_string()).into()),
+        Err(e) => return Err(format!("Invalid Private ID. Not b64. {}", e).into()),
     };
 
     match signature::Ed25519KeyPair::from_pkcs8(local_private_key_bytes.as_ref()) {
         Ok(key_pair) => key_pair,
-        Err(e) => return Err(format!("Failed to load local key pair '{}'.", e.to_string()).into()),
+        Err(e) => return Err(format!("Failed to load local key pair '{}'.", e).into()),
     };
 
     Ok(())
@@ -535,11 +535,7 @@ fn verify_config_shared_users(shared_users: &[SharedUser]) -> Result<(), Box<dyn
         }
         match verify_config_port(&user.port) {
             Ok(_) => {}
-            Err(e) => {
-                return Err(
-                    format!("{}'s port is invalid. {}", user.nickname, e.to_string()).into(),
-                )
-            }
+            Err(e) => return Err(format!("{}'s port is invalid. {}", user.nickname, e).into()),
         }
 
         // Verify public id
@@ -551,8 +547,7 @@ fn verify_config_shared_users(shared_users: &[SharedUser]) -> Result<(), Box<dyn
             Err(e) => {
                 return Err(format!(
                     "{}'s PublicID is invalid. Bad encoding. {}",
-                    user.nickname,
-                    e.to_string()
+                    user.nickname, e
                 )
                 .into())
             }
@@ -569,9 +564,7 @@ fn verify_config_shared_users(shared_users: &[SharedUser]) -> Result<(), Box<dyn
             Err(e) => {
                 return Err(format!(
                     "Full address of '{}', '{}' is not valid. Check IP and port. {}",
-                    user.nickname,
-                    full_address,
-                    e.to_string()
+                    user.nickname, full_address, e
                 )
                 .into())
             }
@@ -663,14 +656,14 @@ fn read_config() -> Result<ConfigFile, Box<dyn Error>> {
     }
 
     let config_string = fs::read_to_string(&config_path)?;
-    let mut config_file: ConfigFile;
-    match serde_json::from_str(&config_string) {
-        Ok(c) => config_file = c,
+
+    let mut config_file: ConfigFile = match serde_json::from_str(&config_string) {
+        Ok(c) => c,
         Err(e) => {
             let exit_error = format!(
                 "config.json is invalid '{}' -- {}",
                 config_path.to_string_lossy(),
-                e.to_string()
+                e
             );
             return Err(exit_error.into());
         }
@@ -704,8 +697,7 @@ pub fn get_everything_file(
             Err(e) => {
                 app_sender.send(AppAggMessage::LogError(format!(
                     "Path unable to share. Fix issue or stop sharing file. '{}'. {}",
-                    path,
-                    e.to_string()
+                    path, e
                 )))?;
                 continue;
             }

@@ -72,11 +72,7 @@ impl EncryptedStream {
             self.crypto_buffer.as_ref(),
         ) {
             Ok(plaintext) => plaintext,
-            Err(e) => {
-                return Err(
-                    format!("Encrypted Stream read failed to decrypt. {}", e.to_string()).into(),
-                )
-            }
+            Err(e) => return Err(format!("Encrypted Stream read failed to decrypt. {}", e).into()),
         };
         let _ = &mut self.buffer.copy_from_slice(&plaintext[..TOTAL_BUFFER_SIZE]);
         self.increment_nonce()?;
@@ -94,11 +90,7 @@ impl EncryptedStream {
             match aes_gcm::aead::Aead::encrypt(&self.cipher, new_nonce, self.buffer.as_ref()) {
                 Ok(cipher_text) => cipher_text,
                 Err(e) => {
-                    return Err(format!(
-                        "Encrypted Stream write failed to encrypt. {}",
-                        e.to_string()
-                    )
-                    .into())
+                    return Err(format!("Encrypted Stream write failed to encrypt. {}", e).into())
                 }
             };
 
