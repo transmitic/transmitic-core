@@ -2,8 +2,9 @@ use core::time;
 use std::{
     collections::{HashMap, VecDeque},
     error::Error,
+    f32::consts::E,
     fs::{self, metadata, File, OpenOptions},
-    io::{Seek, SeekFrom, Write},
+    io::{ErrorKind, Seek, SeekFrom, Write},
     net::{SocketAddr, TcpStream},
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
@@ -312,7 +313,7 @@ impl OutgoingDownloader {
                     owner: shared_user.nickname,
                     data: r,
                 };
-                sx.send(RefreshSharedMessages::UIData(refresh_data));
+                sx.send(RefreshSharedMessages::UIData(refresh_data)).ok();
             }
         });
         (total_user_count, rx)
@@ -908,16 +909,35 @@ impl SingleDownloader {
     fn write_queue(&self) -> Result<(), Box<dyn Error>> {
         let mut write_string = String::new();
 
-        for f in &self.download_queue {
-            write_string.push_str(&format!("{}\n", f));
-        }
+        // Delete queue file so that on program restart, downloader does not start and then do nothing
+        if self.download_queue.is_empty() {
+            let path_queue = Path::new(&self.path_queue_file);
 
-        let mut f = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&self.path_queue_file)?;
-        f.write_all(write_string.as_bytes())?;
+            match fs::remove_file(path_queue) {
+                Ok(_) => {}
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) => {
+                    // TODO create trait that add log_err, log_debug etc to simplify all these calls?
+                    self.app_sender.send(AppAggMessage::LogError(format!(
+                        "Failed to delete queue file '{}'. {}",
+                        path_queue.to_string_lossy(),
+                        e
+                    )))?;
+                }
+            }
+        } else {
+            // Write queue file
+            for f in &self.download_queue {
+                write_string.push_str(&format!("{}\n", f));
+            }
+
+            let mut f = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&self.path_queue_file)?;
+            f.write_all(write_string.as_bytes())?;
+        }
 
         Ok(())
     }
