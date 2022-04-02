@@ -13,7 +13,7 @@ pub struct SelectedDownload {
 #[derive(Debug)]
 pub struct RefreshData {
     pub owner: String,
-    pub data: Result<SharedFile, Box<dyn Error>>,
+    pub data: Result<SharedFile, String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

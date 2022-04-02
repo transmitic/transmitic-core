@@ -34,6 +34,11 @@ use crate::{
 
 const ERR_REC_DISCONNECTED: &str = "Uploader receiver disconnected";
 
+pub enum RefreshSharedMessages {
+    UIData(RefreshData),
+    RefreshFinished,
+}
+
 pub struct OutgoingDownloader {
     config: Config,
     channel_map: HashMap<String, Sender<MessageSingleDownloader>>,
@@ -295,68 +300,72 @@ impl OutgoingDownloader {
         Ok(())
     }
 
-    pub fn refresh_shared_with_me(&mut self) -> Vec<RefreshData> {
-        let mut refresh_list = Vec::new();
-        for shared_user in self.config.get_shared_users() {
-            let r = self.refresh_single_user(&shared_user);
-            refresh_list.push(RefreshData {
-                owner: shared_user.nickname,
-                data: r,
-            });
-        }
+    pub fn refresh_shared_with_me(&mut self) -> (usize, Receiver<RefreshSharedMessages>) {
+        let (sx, rx) = mpsc::channel();
+        let config_clone = self.config.clone();
+        let total_user_count = self.config.get_shared_users().len();
 
-        refresh_list
-    }
-
-    fn refresh_single_user(
-        &mut self,
-        shared_user: &SharedUser,
-    ) -> Result<SharedFile, Box<dyn Error>> {
-        // TODO duped with single downloader
-        // CREATE CONNECTION
-        let mut remote_address = shared_user.ip.clone();
-        remote_address.push_str(&format!(":{}", shared_user.port.clone()));
-
-        let remote_socket_address: SocketAddr = match remote_address.parse() {
-            Ok(remote_socket_address) => remote_socket_address,
-            Err(e) => return Err(Box::new(e)),
-        };
-
-        let stream =
-            TcpStream::connect_timeout(&remote_socket_address, time::Duration::from_secs(2))?;
-
-        let mut transmitic_stream = TransmiticStream::new(
-            stream,
-            shared_user.clone(),
-            self.config.get_local_private_id_bytes(),
-        );
-        let mut encrypted_stream = transmitic_stream.connect()?;
-
-        // request file list
-        let message: u16 = MSG_FILE_LIST;
-        let payload: Vec<u8> = Vec::new();
-        encrypted_stream.write(message, &payload)?;
-
-        let mut json_bytes: Vec<u8> = Vec::new();
-        loop {
-            encrypted_stream.read()?;
-            let client_message = encrypted_stream.get_message()?;
-            json_bytes.extend_from_slice(encrypted_stream.get_payload()?);
-
-            if client_message == MSG_FILE_LIST_FINAL {
-                break;
+        thread::spawn(move || {
+            for shared_user in config_clone.get_shared_users() {
+                let r = refresh_single_user(&config_clone, &shared_user).map_err(|e| e.to_string());
+                let refresh_data = RefreshData {
+                    owner: shared_user.nickname,
+                    data: r,
+                };
+                sx.send(RefreshSharedMessages::UIData(refresh_data));
             }
-        }
-
-        let files_str = std::str::from_utf8(&json_bytes)?;
-        let mut everything_file: SharedFile = serde_json::from_str(files_str)?;
-
-        remove_invalid_files(&mut everything_file);
-
-        print_shared_files(&everything_file, "");
-
-        Ok(everything_file)
+        });
+        (total_user_count, rx)
     }
+}
+
+fn refresh_single_user(
+    config: &Config,
+    shared_user: &SharedUser,
+) -> Result<SharedFile, Box<dyn Error>> {
+    // TODO duped with single downloader
+    // CREATE CONNECTION
+    let mut remote_address = shared_user.ip.clone();
+    remote_address.push_str(&format!(":{}", shared_user.port.clone()));
+
+    let remote_socket_address: SocketAddr = match remote_address.parse() {
+        Ok(remote_socket_address) => remote_socket_address,
+        Err(e) => return Err(Box::new(e)),
+    };
+
+    let stream = TcpStream::connect_timeout(&remote_socket_address, time::Duration::from_secs(2))?;
+
+    let mut transmitic_stream = TransmiticStream::new(
+        stream,
+        shared_user.clone(),
+        config.get_local_private_id_bytes(),
+    );
+    let mut encrypted_stream = transmitic_stream.connect()?;
+
+    // request file list
+    let message: u16 = MSG_FILE_LIST;
+    let payload: Vec<u8> = Vec::new();
+    encrypted_stream.write(message, &payload)?;
+
+    let mut json_bytes: Vec<u8> = Vec::new();
+    loop {
+        encrypted_stream.read()?;
+        let client_message = encrypted_stream.get_message()?;
+        json_bytes.extend_from_slice(encrypted_stream.get_payload()?);
+
+        if client_message == MSG_FILE_LIST_FINAL {
+            break;
+        }
+    }
+
+    let files_str = std::str::from_utf8(&json_bytes)?;
+    let mut everything_file: SharedFile = serde_json::from_str(files_str)?;
+
+    remove_invalid_files(&mut everything_file);
+
+    print_shared_files(&everything_file, "");
+
+    Ok(everything_file)
 }
 
 fn create_downloads_dir() -> Result<(), std::io::Error> {

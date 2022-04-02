@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     error::Error,
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, mpsc::Receiver},
 };
 
 extern crate x25519_dalek;
@@ -13,7 +13,7 @@ use crate::{
     app_aggregator::{run_app_loop, AppAggMessage, CompletedMessage},
     config::{self, Config, ConfigSharedFile, SharedUser},
     incoming_uploader::{IncomingUploader, SharingState},
-    outgoing_downloader::OutgoingDownloader,
+    outgoing_downloader::{OutgoingDownloader, RefreshSharedMessages},
     shared_file::{RefreshData, SelectedDownload},
 };
 
@@ -131,6 +131,7 @@ impl TransmiticCore {
         self.config
             .add_new_user(new_nickname, new_public_id, new_ip, new_port)?;
         self.incoming_uploader.set_new_config(self.config.clone());
+        self.outgoing_downloader.set_new_config(self.config.clone());
         Ok(())
     }
 
@@ -234,7 +235,7 @@ impl TransmiticCore {
         self.config.get_sharing_port()
     }
 
-    pub fn refresh_shared_with_me(&mut self) -> Vec<RefreshData> {
+    pub fn refresh_shared_with_me(&mut self) -> (usize, Receiver<RefreshSharedMessages>) {
         self.outgoing_downloader.refresh_shared_with_me()
     }
 
