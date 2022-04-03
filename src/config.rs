@@ -626,7 +626,7 @@ fn verify_config_shared_files(
     for file in shared_files {
         if file.path.starts_with(transmitic_config_dir_path) {
             return Err(format!(
-                "The Transmitic Config directory, and it's sub files, cannot be shared. '{}'",
+                "The Transmitic Config directory, and its sub files, cannot be shared. '{}'",
                 transmitic_config_dir_path
             )
             .into());
