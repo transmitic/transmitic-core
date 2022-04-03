@@ -534,7 +534,6 @@ impl SingleDownloader {
             let mut everything_file: SharedFile = serde_json::from_str(files_str)?;
 
             remove_invalid_files(&mut everything_file);
-
             //print_shared_files(&everything_file, "");
 
             loop {

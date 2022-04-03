@@ -73,32 +73,38 @@ pub fn print_shared_files(shared_file: &SharedFile, spacer: &str) {
 }
 
 fn get_file_size_string(mut bytes: u64) -> String {
-    let gig: u64 = 1_000_000_000;
-    let meg: u64 = 1_000_000;
-    let byte: u64 = 1000;
+    let gig: u64 = 1_073_741_824;
+    let meg: u64 = 1_048_576;
+    let kb: u64 = 1024;
 
     let divisor: u64;
     let unit: String;
 
     if bytes == 0 {
         bytes = 1;
-        divisor = 1;
-        unit = "b".to_string();
-    } else if bytes >= gig {
+    }
+
+    if bytes >= gig {
         divisor = gig;
         unit = "GB".to_string();
     } else if bytes >= meg {
         divisor = meg;
         unit = "MB".to_string();
-    } else if bytes >= byte {
-        divisor = byte;
+    } else if bytes >= kb {
+        divisor = kb;
         unit = "KB".to_string();
     } else {
-        divisor = byte;
-        unit = "b".to_string();
+        divisor = 1;
+        unit = "bytes".to_string();
     }
 
     let size = bytes as f64 / divisor as f64;
-    let size_string = format!("{:.2} {}", size, &unit);
+
+    let size_string: String = if unit == "bytes" {
+        format!("{} {}", size, &unit)
+    } else {
+        format!("{:.2} {}", size, &unit)
+    };
+
     size_string
 }
