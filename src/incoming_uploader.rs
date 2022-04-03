@@ -310,6 +310,7 @@ impl SingleUploader {
                     "Unknown IP tried to connect: '{}'",
                     client_connecting_ip
                 )))?;
+                thread::sleep(time::Duration::from_secs(30));
                 return Ok(());
             }
         };
@@ -321,6 +322,7 @@ impl SingleUploader {
                 "User tried to connect but is currently set to Block: '{}'",
                 self.nickname
             )))?;
+            thread::sleep(time::Duration::from_secs(30));
             return Ok(());
         }
 

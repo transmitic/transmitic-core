@@ -1,7 +1,8 @@
+use core::time;
 use std::{
     error::Error,
     io::{Read, Write},
-    net::TcpStream,
+    net::TcpStream, thread,
 };
 
 use rand_core::OsRng;
@@ -149,6 +150,7 @@ impl TransmiticStream {
         ) {
             Ok(_) => {}
             Err(e) => {
+                thread::sleep(time::Duration::from_secs(30));
                 return Err(format!("Remote ID does not match. {}", e).into());
             }
         }
