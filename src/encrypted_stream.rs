@@ -3,6 +3,7 @@ use std::error::Error;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
+use aes_gcm::aead::AeadMut;
 use aes_gcm::aead::{generic_array::GenericArray, NewAead};
 use aes_gcm::Aes256Gcm;
 
@@ -66,14 +67,12 @@ impl EncryptedStream {
     pub fn read(&mut self) -> Result<(), Box<dyn Error>> {
         self._read_stream()?;
         let new_nonce = GenericArray::from_slice(&self.nonce[..]);
-        let plaintext = match aes_gcm::aead::Aead::decrypt(
-            &self.cipher,
-            new_nonce,
-            self.crypto_buffer.as_ref(),
-        ) {
+
+        let plaintext = match self.cipher.decrypt(new_nonce, self.crypto_buffer.as_ref()) {
             Ok(plaintext) => plaintext,
             Err(e) => return Err(format!("Encrypted Stream read failed to decrypt. {}", e).into()),
         };
+
         let _ = &mut self.buffer.copy_from_slice(&plaintext[..TOTAL_BUFFER_SIZE]);
         self.increment_nonce()?;
         Ok(())
@@ -86,13 +85,11 @@ impl EncryptedStream {
     pub fn write(&mut self, msg: u16, payload: &[u8]) -> Result<(), Box<dyn Error>> {
         self.set_buffer(msg, payload);
         let new_nonce = GenericArray::from_slice(&self.nonce[..]);
-        let cipher_text =
-            match aes_gcm::aead::Aead::encrypt(&self.cipher, new_nonce, self.buffer.as_ref()) {
-                Ok(cipher_text) => cipher_text,
-                Err(e) => {
-                    return Err(format!("Encrypted Stream write failed to encrypt. {}", e).into())
-                }
-            };
+
+        let cipher_text = match self.cipher.encrypt(new_nonce, self.buffer.as_ref()) {
+            Ok(cipher_text) => cipher_text,
+            Err(e) => return Err(format!("Encrypted Stream write failed to encrypt. {}", e).into()),
+        };
 
         self._write_stream(&cipher_text[..])?;
         self.increment_nonce()?;
