@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     error::Error,
     path::PathBuf,
-    sync::{Arc, RwLock, mpsc::Receiver},
+    sync::{mpsc::Receiver, Arc, RwLock},
 };
 
 extern crate x25519_dalek;
@@ -14,7 +14,7 @@ use crate::{
     config::{self, Config, ConfigSharedFile, SharedUser},
     incoming_uploader::{IncomingUploader, SharingState},
     outgoing_downloader::{OutgoingDownloader, RefreshSharedMessages},
-    shared_file::{RefreshData, SelectedDownload},
+    shared_file::SelectedDownload,
 };
 
 // TODO
@@ -36,9 +36,6 @@ pub struct TransmiticCore {
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
 }
 
-// TODO stream connect timeout
-//  review stream, try_clone, set nonblocking
-// TODO how to handle non existing files?
 // TODO allow empty IP, port, and PublicIDs. "placeholder" users
 
 // TODO add online/offline to state

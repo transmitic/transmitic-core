@@ -76,10 +76,13 @@ impl Config {
         }
 
         for mut file in files {
+            // Normalize path
+            // TODO duped
             if file.starts_with("file://") {
                 file = file[7..].to_string();
             }
             file = file.replace('/', "\\");
+
             // File already shared, don't readd it
             if existing_paths.contains(&file) {
                 continue;
@@ -228,6 +231,7 @@ impl Config {
     ) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
 
+        // TODO iterate without ownership issues?
         for i in 0..new_config_file.shared_files.len() {
             if new_config_file.shared_files[i].path == file_path {
                 new_config_file.shared_files[i]
@@ -244,6 +248,7 @@ impl Config {
     pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
 
+        // TODO iterate without ownership issues?
         // Remove from shared files
         for i in 0..new_config_file.shared_files.len() {
             new_config_file.shared_files[i]
@@ -391,7 +396,7 @@ fn verify_config(config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
 }
 
 fn sanitize_config(config_file: &mut ConfigFile) {
-    // DO A custom serde serializer that trims all strings?
+    // TODO A custom serde serializer that trims all strings?
 
     // trim
     config_file.my_private_id = config_file.my_private_id.trim().to_string();
@@ -414,6 +419,7 @@ fn sanitize_config(config_file: &mut ConfigFile) {
     for file in config_file.shared_files.iter_mut() {
         file.path = file.path.trim().to_string();
 
+        // TODO duped
         if file.path.starts_with("file://") {
             file.path = file.path[7..].to_string();
         }

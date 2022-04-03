@@ -136,7 +136,7 @@ impl UploaderManager {
 
             ip_address.push_str(&format!(":{}", self.config.get_sharing_port()));
             self.app_sender.send(AppAggMessage::LogInfo(format!(
-                "Waiting for incoming on {}",
+                "Waiting for incoming uploads on {}",
                 ip_address
             )))?;
 
@@ -306,8 +306,8 @@ impl SingleUploader {
         let shared_user = match shared_user {
             Some(shared_user) => shared_user,
             None => {
-                self.app_sender.send(AppAggMessage::LogInfo(format!(
-                    "Unknown IP: '{}'",
+                self.app_sender.send(AppAggMessage::LogWarning(format!(
+                    "Unknown IP tried to connect: '{}'",
                     client_connecting_ip
                 )))?;
                 return Ok(());
@@ -317,8 +317,8 @@ impl SingleUploader {
         self.nickname = shared_user.nickname.clone();
 
         if !shared_user.allowed {
-            self.app_sender.send(AppAggMessage::LogDebug(format!(
-                "User tried to connect but is not allowed: '{}'",
+            self.app_sender.send(AppAggMessage::LogInfo(format!(
+                "User tried to connect but is currently set to Block: '{}'",
                 self.nickname
             )))?;
             return Ok(());
@@ -494,7 +494,7 @@ impl SingleUploader {
                 }))?;
 
             // Finished sending file
-            encrypted_stream.write(MSG_FILE_FINISHED, &Vec::with_capacity(1))?;
+            encrypted_stream.write(MSG_FILE_FINISHED, &Vec::new())?;
             self.app_sender.send(AppAggMessage::LogInfo(format!(
                 "File transfer to '{}' completed '{}'",
                 self.nickname, client_file_choice

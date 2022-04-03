@@ -83,6 +83,7 @@ fn app_loop(
 
         match msg {
             // TODO clean up. Struct for download_state instead
+            // TODO improve variable names
             AppAggMessage::InvalidFile(f) => {
                 let mut l = download_state.write().unwrap();
                 match l.get_mut(&f.nickname) {

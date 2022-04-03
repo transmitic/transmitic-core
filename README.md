@@ -1,8 +1,9 @@
 # Transmitic Core
 
-## THIS PROJECT IS NOT FINISHED. DO NOT USE THIS.
+The core library for Transmitic.  
+This project's work and details are tracked in the transmitic repo https://github.com/transmitic/transmitic
 
-The core library for Transmitic
+## THIS PROJECT IS NOT STABLE. DO NOT USE THIS.
 
 ## License
 

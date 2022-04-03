@@ -12,7 +12,7 @@ use crate::core_consts::{
 
 // TODO Read and write only payload size, not entire buffer
 //  and encrypt only needed
-//  Zero out buffer
+//  Zero out buffer?
 
 pub struct EncryptedStream {
     stream: TcpStream,
@@ -46,7 +46,7 @@ impl EncryptedStream {
             let byte = self.nonce[i];
             if byte == 255 {
                 if i == self.nonce.len() - 1 {
-                    return Err("ERROR: Nonce maxed. Reconnect.".into());
+                    return Err("Nonce maxed. Reconnect.".into());
                 }
                 self.nonce[i] = 0;
                 flip = true;

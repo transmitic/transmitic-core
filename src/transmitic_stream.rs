@@ -74,7 +74,7 @@ impl TransmiticStream {
     }
 
     fn send_transmitic_header(&mut self) -> Result<(), Box<dyn Error>> {
-        let mut buffer: [u8; 7] = [0; 4 + 1 + 2];
+        let mut buffer: [u8; 7] = [0; TRAN_MAGIC_NUMBER.len() + 1 + 2];
         buffer[0..4].copy_from_slice(&TRAN_MAGIC_NUMBER);
         buffer[4] = TRAN_API_MAJOR;
         buffer[5..7].copy_from_slice(&TRAN_API_MINOR.to_be_bytes());
@@ -83,7 +83,7 @@ impl TransmiticStream {
     }
 
     fn receive_transmitic_header(&mut self) -> Result<(), Box<dyn Error>> {
-        let mut buffer: [u8; 7] = [0; 4 + 1 + 2];
+        let mut buffer: [u8; 7] = [0; TRAN_MAGIC_NUMBER.len() + 1 + 2];
         // TODO set read timeout
         self.stream.read_exact(&mut buffer)?;
 
