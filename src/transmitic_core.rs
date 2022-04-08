@@ -2,7 +2,10 @@ use std::{
     collections::{HashMap, VecDeque},
     error::Error,
     path::PathBuf,
-    sync::{mpsc::Receiver, Arc, RwLock},
+    sync::{
+        mpsc::{Receiver, Sender},
+        Arc, RwLock,
+    },
 };
 
 extern crate x25519_dalek;
@@ -34,6 +37,7 @@ pub struct TransmiticCore {
     incoming_uploader: IncomingUploader,
     download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
+    app_sender: Sender<AppAggMessage>,
 }
 
 // TODO allow empty IP, port, and PublicIDs. "placeholder" users
@@ -100,7 +104,7 @@ impl TransmiticCore {
         let mut outgoing_downloader = OutgoingDownloader::new(config.clone(), app_sender.clone())?;
         outgoing_downloader.start_downloading();
 
-        let incoming_uploader = IncomingUploader::new(config.clone(), app_sender);
+        let incoming_uploader = IncomingUploader::new(config.clone(), app_sender.clone());
 
         Ok(TransmiticCore {
             config,
@@ -110,6 +114,7 @@ impl TransmiticCore {
             incoming_uploader,
             download_state: arc_download_state,
             upload_state: arc_upload_state,
+            app_sender,
         })
     }
 
@@ -264,6 +269,12 @@ impl TransmiticCore {
         self.incoming_uploader
             .set_my_sharing_state(sharing_state.clone());
         self.sharing_state = sharing_state;
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!(
+                "Sharing state set to '{:?}'",
+                self.sharing_state
+            )))
+            .ok();
     }
 
     pub fn set_user_is_allowed_state(

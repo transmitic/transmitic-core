@@ -21,7 +21,7 @@ use crate::transmitic_core::SingleUploadState;
 use crate::transmitic_stream::TransmiticStream;
 use crate::utils::get_file_by_path;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SharingState {
     Off,
     Local,
