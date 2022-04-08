@@ -434,10 +434,16 @@ fn sanitize_config(config_file: &mut ConfigFile) {
 }
 
 fn verify_config_port(port: &str) -> Result<(), Box<dyn Error>> {
-    let _port: i32 = match port.parse() {
+    let port: i32 = match port.parse() {
         Ok(p) => p,
         Err(_) => return Err("Port must be a number.".into()),
     };
+
+    let max_port = 65535;
+    if port > 65535 {
+        return Err(format!("Highest port value possible is {}", max_port).into())
+    }
+
     Ok(())
 }
 
