@@ -48,6 +48,7 @@ pub struct SingleUploadState {
     pub nickname: String,
     pub path: String,
     pub percent: u64,
+    pub is_online: bool,
 }
 
 pub struct CompletedDownloadState {

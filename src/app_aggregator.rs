@@ -46,6 +46,7 @@ pub enum AppAggMessage {
     Completed(CompletedMessage),
     Offline(OfflineMessage),
     UploadStateChange(SingleUploadState),
+    UploadDisconnected(String),
     AppFailedKill(String),
 }
 
@@ -163,6 +164,15 @@ fn app_loop(
             AppAggMessage::UploadStateChange(f) => {
                 let mut l = upload_state.write().unwrap();
                 l.insert(f.nickname.clone(), f);
+            }
+            AppAggMessage::UploadDisconnected(nickname) => {
+                let mut l = upload_state.write().unwrap();
+                // There was Some existing download in progress
+                if let Some(state) = l.get(&nickname) {
+                    let mut state = state.clone();
+                    state.is_online = false;
+                    l.insert(nickname, state);
+                }
             }
             AppAggMessage::AppFailedKill(s) => {
                 eprintln!("AppFailedKill. {}", s);

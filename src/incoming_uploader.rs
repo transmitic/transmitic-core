@@ -178,6 +178,15 @@ impl UploaderManager {
                                                 ip, e
                                             )))
                                             .unwrap();
+                                        // Mid download. Upload is now disconnected.
+                                        if single_uploader.active_msg == MSG_FILE_SELECTION_CONTINUE
+                                        {
+                                            thread_app_sender
+                                                .send(AppAggMessage::UploadDisconnected(
+                                                    single_uploader.nickname,
+                                                ))
+                                                .unwrap();
+                                        }
                                     }
                                 }
                             }));
@@ -265,6 +274,7 @@ struct SingleUploader {
     nickname: String,
     app_sender: Sender<AppAggMessage>,
     should_shutdown: bool,
+    active_msg: u16,
 }
 
 impl SingleUploader {
@@ -280,6 +290,7 @@ impl SingleUploader {
             nickname,
             app_sender,
             should_shutdown: false,
+            active_msg: 0,
         }
     }
 
@@ -367,6 +378,7 @@ impl SingleUploader {
         }
 
         let client_message = encrypted_stream.get_message()?;
+        self.active_msg = client_message;
 
         if client_message == MSG_FILE_LIST {
             self.app_sender.send(AppAggMessage::LogDebug(format!(
@@ -456,6 +468,7 @@ impl SingleUploader {
                     nickname: self.nickname.clone(),
                     path: client_file_choice.to_string(),
                     percent: 0,
+                    is_online: true,
                 }))?;
 
             let mut read_response = 1; // TODO combine with loop?
@@ -480,6 +493,7 @@ impl SingleUploader {
                         } else {
                             99
                         }, // 100 will be sent outside this loop
+                        is_online: true,
                     }))?;
 
                 self.read_receiver()?;
@@ -493,6 +507,7 @@ impl SingleUploader {
                     nickname: self.nickname.clone(),
                     path: client_file_choice.to_string(),
                     percent: 100,
+                    is_online: true,
                 }))?;
 
             // Finished sending file
