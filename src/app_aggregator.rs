@@ -19,6 +19,7 @@ pub struct InProgressMessage {
     pub percent: u64,
     pub download_queue: VecDeque<String>,
     pub path_local_disk: Option<String>,
+    pub size_string: String,
 }
 
 #[derive(Clone, Debug)]
@@ -27,6 +28,7 @@ pub struct CompletedMessage {
     pub path: String,
     pub download_queue: VecDeque<String>,
     pub path_local_disk: String,
+    pub size_string: String,
 }
 
 pub struct OfflineMessage {
@@ -111,6 +113,7 @@ fn app_loop(
                         h.active_download_local_path = f.path_local_disk;
                         h.download_queue = f.download_queue;
                         h.is_online = true;
+                        h.active_download_size = f.size_string;
                     }
                     None => {
                         let mut s = SingleDownloadState::default();
@@ -118,6 +121,7 @@ fn app_loop(
                         s.active_download_local_path = f.path_local_disk;
                         s.active_download_percent = f.percent;
                         s.download_queue = f.download_queue;
+                        s.active_download_size = f.size_string;
                         l.insert(f.nickname, s);
                     }
                 }

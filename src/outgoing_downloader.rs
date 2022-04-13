@@ -399,6 +399,7 @@ struct SingleDownloader {
     active_download_size: u64,
     active_downloaded_current_bytes: u64,
     active_download_local_path: Option<String>,
+    active_download_total_size: String,
     shutdown: bool,
 }
 
@@ -426,6 +427,7 @@ impl SingleDownloader {
             active_download_size: 0,
             active_downloaded_current_bytes: 0,
             active_download_local_path: None,
+            active_download_total_size: "".to_string(),
             shutdown: false,
         }
     }
@@ -559,6 +561,7 @@ impl SingleDownloader {
                 self.active_download_path = Some(path_active_download.clone());
                 self.active_download_size = shared_file.file_size;
                 self.active_downloaded_current_bytes = 0;
+                self.active_download_total_size = shared_file.size_string.clone();
 
                 let current_path_name = get_sanitized_disk_file_name(&shared_file)?;
                 let mut destination_path = root_download_dir.clone();
@@ -581,7 +584,11 @@ impl SingleDownloader {
                     self.download_queue.pop_front();
                     self.write_queue()?;
                     self.active_download_path = None;
-                    self.app_update_completed(&path_active_download, destination_path)?;
+                    self.app_update_completed(
+                        &path_active_download,
+                        destination_path,
+                        self.active_download_total_size.clone(),
+                    )?;
                 }
                 self.app_update_in_progress()?;
 
@@ -673,7 +680,6 @@ impl SingleDownloader {
             self.active_downloaded_current_bytes += current_downloaded_bytes as u64;
             self.app_update_in_progress()?;
 
-            
             loop {
                 let mut payload_bytes: Vec<u8> = Vec::new();
                 payload_bytes.extend_from_slice(encrypted_stream.get_payload()?);
@@ -827,6 +833,7 @@ impl SingleDownloader {
                 * 100_f64) as u64,
             download_queue: self.get_queue_without_active(),
             path_local_disk: self.active_download_local_path.clone(),
+            size_string: self.active_download_total_size.clone(),
         };
         self.app_sender.send(AppAggMessage::InProgress(i))?;
 
@@ -837,12 +844,14 @@ impl SingleDownloader {
         &self,
         path: &str,
         path_local_disk: String,
+        size: String,
     ) -> Result<(), Box<dyn Error>> {
         let i = CompletedMessage {
             nickname: self.shared_user.nickname.clone(),
             path: path.to_string(),
             download_queue: self.get_queue_without_active(),
             path_local_disk,
+            size_string: size,
         };
         self.app_sender.send(AppAggMessage::Completed(i))?;
 
