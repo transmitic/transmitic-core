@@ -183,6 +183,12 @@ impl TransmiticCore {
         }
     }
 
+    pub fn downloads_clear_finished_from_me(&mut self) {
+        let upload_state = self.get_upload_state();
+        let mut u = upload_state.write().unwrap();
+        u.clear();
+    }
+
     pub fn downloads_clear_invalid(&mut self) {
         let mut lock = self.download_state.write().unwrap();
         for v in lock.values_mut() {
