@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     error::Error,
+    hash::Hash,
     path::PathBuf,
     sync::{
         mpsc::{Receiver, Sender},
@@ -17,7 +18,7 @@ use crate::{
     config::{self, Config, ConfigSharedFile, SharedUser},
     incoming_uploader::{IncomingUploader, SharingState},
     outgoing_downloader::{OutgoingDownloader, RefreshSharedMessages},
-    shared_file::SelectedDownload,
+    shared_file::{SelectedDownload, SharedFile},
 };
 
 // TODO
@@ -38,6 +39,7 @@ pub struct TransmiticCore {
     download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
     app_sender: Sender<AppAggMessage>,
+    shared_with_me_data: HashMap<String, SharedWithMeData>,
 }
 
 // TODO allow empty IP, port, and PublicIDs. "placeholder" users
@@ -82,6 +84,25 @@ impl Default for SingleDownloadState {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SharedWithMeData {
+    pub nickname: String,
+    pub in_progress: bool,
+    pub shared_file: Option<SharedFile>,
+    pub error: Option<String>,
+}
+
+impl SharedWithMeData {
+    pub fn new(nickname: String) -> SharedWithMeData {
+        SharedWithMeData {
+            nickname,
+            in_progress: false,
+            shared_file: None,
+            error: None,
+        }
+    }
+}
+
 // TODO inconsistent naming:
 //  active download VS in progress
 //  owner vs nickname
@@ -118,6 +139,7 @@ impl TransmiticCore {
             download_state: arc_download_state,
             upload_state: arc_upload_state,
             app_sender,
+            shared_with_me_data: HashMap::new(),
         })
     }
 
@@ -248,6 +270,22 @@ impl TransmiticCore {
 
     pub fn refresh_shared_with_me(&mut self) -> (usize, Receiver<RefreshSharedMessages>) {
         self.outgoing_downloader.refresh_shared_with_me()
+    }
+
+    pub fn get_shared_with_me_data(&mut self) -> HashMap<String, SharedWithMeData> {
+        let shared_users = self.get_shared_users();
+        let nicknames: Vec<String> = shared_users.iter().map(|f| f.nickname.clone()).collect();
+        self.shared_with_me_data
+            .retain(|k, _| nicknames.contains(k));
+
+        for nickname in nicknames {
+            if !self.shared_with_me_data.contains_key(&nickname) {
+                self.shared_with_me_data
+                    .insert(nickname.clone(), SharedWithMeData::new(nickname));
+            }
+        }
+
+        self.shared_with_me_data.clone()
     }
 
     pub fn remove_file_from_sharing(&mut self, file_path: String) -> Result<(), Box<dyn Error>> {
