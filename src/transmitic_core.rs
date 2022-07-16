@@ -18,7 +18,7 @@ use crate::{
     config::{self, Config, ConfigSharedFile, SharedUser},
     incoming_uploader::{IncomingUploader, SharingState},
     outgoing_downloader::{OutgoingDownloader, RefreshSharedMessages},
-    shared_file::{SelectedDownload, SharedFile},
+    shared_file::{SelectedDownload, SharedFile, RefreshData},
 };
 
 // TODO
@@ -40,6 +40,11 @@ pub struct TransmiticCore {
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
     app_sender: Sender<AppAggMessage>,
     shared_with_me_data: HashMap<String, SharedWithMeData>,
+
+    refresh_is_inprogress: bool,
+    refresh_total_count: usize,
+    refresh_data: Vec<RefreshData>,
+    refresh_recv: Option<Receiver<RefreshSharedMessages>>,
 }
 
 // TODO allow empty IP, port, and PublicIDs. "placeholder" users
@@ -140,6 +145,10 @@ impl TransmiticCore {
             upload_state: arc_upload_state,
             app_sender,
             shared_with_me_data: HashMap::new(),
+            refresh_is_inprogress: false,
+            refresh_total_count: 0,
+            refresh_data: Vec::new(),
+            refresh_recv: None,
         })
     }
 
@@ -270,6 +279,20 @@ impl TransmiticCore {
 
     pub fn refresh_shared_with_me(&mut self) -> (usize, Receiver<RefreshSharedMessages>) {
         self.outgoing_downloader.refresh_shared_with_me()
+    }
+
+    pub fn start_refresh_shared_with_me_all(&mut self) -> String {
+        if self.refresh_is_inprogress {
+            return self.refresh_total_count.to_string();
+        }
+
+        let refresh_data = self.refresh_shared_with_me();
+        self.refresh_is_inprogress = true;
+        self.refresh_total_count = refresh_data.0;
+        self.refresh_recv = Some(refresh_data.1);
+        self.refresh_data.clear();
+
+        self.refresh_total_count.to_string()
     }
 
     pub fn get_shared_with_me_data(&mut self) -> HashMap<String, SharedWithMeData> {
