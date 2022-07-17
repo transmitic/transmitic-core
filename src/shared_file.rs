@@ -8,10 +8,11 @@ pub struct SelectedDownload {
     pub owner: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RefreshData {
     pub owner: String,
     pub data: Result<SharedFile, String>,
+    pub in_progress: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

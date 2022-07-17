@@ -2,10 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     error::Error,
     path::PathBuf,
-    sync::{
-        mpsc::{Receiver, Sender},
-        Arc, RwLock,
-    },
+    sync::{mpsc::Sender, Arc, RwLock},
 };
 
 extern crate x25519_dalek;
@@ -16,8 +13,8 @@ use crate::{
     app_aggregator::{run_app_loop, AppAggMessage, CompletedMessage},
     config::{self, Config, ConfigSharedFile, SharedUser},
     incoming_uploader::{IncomingUploader, SharingState},
-    outgoing_downloader::{OutgoingDownloader, RefreshSharedMessages},
-    shared_file::SelectedDownload,
+    outgoing_downloader::OutgoingDownloader,
+    shared_file::{RefreshData, SelectedDownload},
 };
 
 // TODO
@@ -246,8 +243,17 @@ impl TransmiticCore {
         self.config.get_sharing_port()
     }
 
-    pub fn refresh_shared_with_me(&mut self) -> (usize, Receiver<RefreshSharedMessages>) {
-        self.outgoing_downloader.refresh_shared_with_me()
+    pub fn get_shared_with_me_data(&mut self) -> HashMap<String, RefreshData> {
+        self.outgoing_downloader.get_shared_with_me_data()
+    }
+
+    pub fn start_refresh_shared_with_me_all(&mut self) {
+        self.outgoing_downloader.start_refresh_shared_with_me_all();
+    }
+
+    pub fn start_refresh_shared_with_me_single_user(&mut self, nickname: String) {
+        self.outgoing_downloader
+            .start_refresh_shared_with_me_single_user(nickname);
     }
 
     pub fn remove_file_from_sharing(&mut self, file_path: String) -> Result<(), Box<dyn Error>> {
