@@ -21,6 +21,8 @@ use crate::transmitic_core::SingleUploadState;
 use crate::transmitic_stream::TransmiticStream;
 use crate::utils::get_file_by_path;
 
+use std::fmt::Write as _;
+
 #[derive(Clone, Debug)]
 pub enum SharingState {
     Off,
@@ -134,7 +136,7 @@ impl UploaderManager {
                 }
             }
 
-            ip_address.push_str(&format!(":{}", self.config.get_sharing_port()));
+            write!(ip_address, ":{}", self.config.get_sharing_port()).unwrap();
             self.app_sender.send(AppAggMessage::LogInfo(format!(
                 "Waiting for incoming uploads on {}",
                 ip_address

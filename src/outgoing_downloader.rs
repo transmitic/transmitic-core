@@ -1,14 +1,3 @@
-use core::time;
-use std::{
-    collections::{HashMap, VecDeque},
-    error::Error,
-    fs::{self, metadata, File, OpenOptions},
-    io::{ErrorKind, Seek, SeekFrom, Write},
-    net::{SocketAddr, TcpStream},
-    panic::{self, AssertUnwindSafe},
-    path::{Path, PathBuf},
-};
-
 use crate::{
     app_aggregator::{
         AppAggMessage, CompletedMessage, InProgressMessage, InvalidFileMessage, OfflineMessage,
@@ -18,6 +7,17 @@ use crate::{
     encrypted_stream::EncryptedStream,
     shared_file::{remove_invalid_files, RefreshData, SelectedDownload, SharedFile},
     utils::get_file_by_path,
+};
+use core::time;
+use std::fmt::Write as _;
+use std::{
+    collections::{HashMap, VecDeque},
+    error::Error,
+    fs::{self, metadata, File, OpenOptions},
+    io::{ErrorKind, Seek, SeekFrom, Write},
+    net::{SocketAddr, TcpStream},
+    panic::{self, AssertUnwindSafe},
+    path::{Path, PathBuf},
 };
 
 use std::sync::mpsc;
@@ -423,7 +423,8 @@ fn refresh_single_user(
     // TODO duped with single downloader
     // CREATE CONNECTION
     let mut remote_address = shared_user.ip.clone();
-    remote_address.push_str(&format!(":{}", shared_user.port.clone()));
+
+    write!(remote_address, ":{}", shared_user.port.clone()).unwrap();
 
     let remote_socket_address: SocketAddr = match remote_address.parse() {
         Ok(remote_socket_address) => remote_socket_address,
@@ -590,7 +591,8 @@ impl SingleDownloader {
             // TODO duped with refresh_shared_with_me
             // CREATE CONNECTION
             let mut remote_address = self.shared_user.ip.clone();
-            remote_address.push_str(&format!(":{}", self.shared_user.port.clone()));
+
+            write!(remote_address, ":{}", self.shared_user.port.clone()).unwrap();
             self.app_sender.send(AppAggMessage::LogInfo(format!(
                 "Attempt outgoing download {} {}",
                 self.shared_user.nickname, remote_address
@@ -1026,7 +1028,7 @@ impl SingleDownloader {
 
     fn write_queue_file(&self, mut write_string: String) -> Result<(), Box<dyn Error>> {
         for f in &self.download_queue {
-            write_string.push_str(&format!("{}\n", f));
+            writeln!(write_string, "{}", f).unwrap();
         }
 
         let mut f = OpenOptions::new()
