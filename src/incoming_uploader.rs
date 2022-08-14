@@ -331,7 +331,7 @@ impl SingleUploader {
         self.nickname = shared_user.nickname.clone();
 
         if !shared_user.allowed {
-            self.app_sender.send(AppAggMessage::LogInfo(format!(
+            self.app_sender.send(AppAggMessage::LogWarning(format!(
                 "User tried to connect but is currently set to Block: '{}'",
                 self.nickname
             )))?;

@@ -1,8 +1,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{mpsc, Arc, RwLock};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
+
 use std::thread;
 
+use crate::logger::{LogLevel, Logger};
 use crate::transmitic_core::{SingleDownloadState, SingleUploadState};
 
 // TODO combine them all into 1 struct?
@@ -41,6 +43,9 @@ pub enum AppAggMessage {
     LogInfo(String),
     LogWarning(String),
     LogError(String),
+    LogCritical(String),
+    SetLogLevel(LogLevel),
+    LogToFileState(bool),
     InvalidFile(InvalidFileMessage),
     InProgress(InProgressMessage),
     Completed(CompletedMessage),
@@ -53,11 +58,12 @@ pub enum AppAggMessage {
 pub fn run_app_loop(
     downlaod_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
+    logger: Arc<Mutex<Logger>>,
 ) -> Sender<AppAggMessage> {
     let (sender, receiver): (Sender<AppAggMessage>, Receiver<AppAggMessage>) = mpsc::channel();
 
     thread::spawn(move || {
-        app_loop(receiver, downlaod_state, upload_state);
+        app_loop(receiver, downlaod_state, upload_state, logger);
     });
 
     sender
@@ -74,6 +80,7 @@ fn app_loop(
     receiver: Receiver<AppAggMessage>,
     download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
+    logger: Arc<Mutex<Logger>>,
 ) {
     loop {
         let msg = match receiver.recv() {
@@ -89,6 +96,14 @@ fn app_loop(
             // TODO improve variable names
             AppAggMessage::InvalidFile(f) => {
                 let mut l = download_state.write().unwrap();
+                log_message(
+                    &logger,
+                    format!(
+                        "Invalid file from '{}' - '{}'",
+                        &f.nickname, &f.invalid_path
+                    ),
+                    LogLevel::Warning,
+                );
                 match l.get_mut(&f.nickname) {
                     Some(h) => {
                         h.active_download_path = f.active_path;
@@ -129,6 +144,14 @@ fn app_loop(
             }
             AppAggMessage::Completed(f) => {
                 let mut l = download_state.write().unwrap();
+                log_message(
+                    &logger,
+                    format!(
+                        "Download completed '{}' - '{}'",
+                        &f.nickname, &f.path_local_disk
+                    ),
+                    LogLevel::Info,
+                );
                 match l.get_mut(&f.nickname) {
                     Some(h) => {
                         h.completed_downloads.push(f.clone());
@@ -167,6 +190,11 @@ fn app_loop(
             }
             AppAggMessage::UploadDisconnected(nickname) => {
                 let mut l = upload_state.write().unwrap();
+                log_message(
+                    &logger,
+                    format!("Upload disconnected '{}'", &nickname),
+                    LogLevel::Debug,
+                );
                 // There was Some existing download in progress
                 if let Some(state) = l.get(&nickname) {
                     let mut state = state.clone();
@@ -178,10 +206,26 @@ fn app_loop(
                 eprintln!("AppFailedKill. {}", s);
                 std::process::exit(ExitCodes::AppFailedKill as i32);
             }
-            AppAggMessage::LogDebug(s) => println!("[DEBUG] {}", s),
-            AppAggMessage::LogInfo(s) => println!("[INFO] {}", s),
-            AppAggMessage::LogWarning(s) => println!("[WARNING] {}", s),
-            AppAggMessage::LogError(s) => println!("[ERROR] {}", s),
+            AppAggMessage::LogDebug(message) => log_message(&logger, message, LogLevel::Debug),
+            AppAggMessage::LogInfo(message) => log_message(&logger, message, LogLevel::Info),
+            AppAggMessage::LogWarning(message) => log_message(&logger, message, LogLevel::Warning),
+            AppAggMessage::LogError(message) => log_message(&logger, message, LogLevel::Error),
+            AppAggMessage::LogCritical(message) => {
+                log_message(&logger, message, LogLevel::Critical)
+            }
+            AppAggMessage::SetLogLevel(log_level) => {
+                let mut logger_guard = logger.lock().unwrap_or_else(|err| err.into_inner());
+                logger_guard.set_log_level(log_level);
+            }
+            AppAggMessage::LogToFileState(state) => {
+                let mut logger_guard = logger.lock().unwrap_or_else(|err| err.into_inner());
+                logger_guard.set_is_file_logging(state);
+            }
         }
     }
+}
+
+fn log_message(logger: &Arc<Mutex<Logger>>, message: String, log_level: LogLevel) {
+    let mut logger_guard = logger.lock().unwrap_or_else(|err| err.into_inner());
+    logger_guard.log_message(log_level, message);
 }

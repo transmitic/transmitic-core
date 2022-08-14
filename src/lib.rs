@@ -4,6 +4,7 @@ pub mod core_consts;
 pub mod crypto;
 pub mod encrypted_stream;
 pub mod incoming_uploader;
+pub mod logger;
 pub mod outgoing_downloader;
 pub mod shared_file;
 pub mod transmitic_core;

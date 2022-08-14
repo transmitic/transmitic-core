@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     error::Error,
     path::PathBuf,
-    sync::{mpsc::Sender, Arc, RwLock},
+    sync::{mpsc::Sender, Arc, Mutex, RwLock},
 };
 
 extern crate x25519_dalek;
@@ -13,6 +13,7 @@ use crate::{
     app_aggregator::{run_app_loop, AppAggMessage, CompletedMessage},
     config::{self, Config, ConfigSharedFile, SharedUser},
     incoming_uploader::{IncomingUploader, SharingState},
+    logger::{LogLevel, Logger, DEFAULT_LOG_LEVEL, DEFAULT_LOG_TO_FILE},
     outgoing_downloader::OutgoingDownloader,
     shared_file::{RefreshData, SelectedDownload},
 };
@@ -35,6 +36,7 @@ pub struct TransmiticCore {
     download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
     app_sender: Sender<AppAggMessage>,
+    logger: Arc<Mutex<Logger>>,
 }
 
 // TODO allow empty IP, port, and PublicIDs. "placeholder" users
@@ -87,6 +89,12 @@ impl TransmiticCore {
         let config = Config::new()?;
         let is_first_start = config.is_first_start();
 
+        let is_log_to_file = DEFAULT_LOG_TO_FILE;
+        let log_level = DEFAULT_LOG_LEVEL;
+        let logger = Logger::new(log_level, is_log_to_file);
+        let logger_arc = Arc::new(Mutex::new(logger));
+        let logger_clone = Arc::clone(&logger_arc);
+
         let upload_state: HashMap<String, SingleUploadState> = HashMap::new();
         let upload_state_lock = RwLock::new(upload_state);
         let arc_upload_state = Arc::new(upload_state_lock);
@@ -97,9 +105,13 @@ impl TransmiticCore {
         let arc_download_state = Arc::new(download_state_lock);
         let arc_clone = Arc::clone(&arc_download_state);
 
-        let app_sender = run_app_loop(arc_clone, arc_upload_clone);
+        let app_sender = run_app_loop(arc_clone, arc_upload_clone, logger_clone);
 
-        app_sender.send(AppAggMessage::LogInfo("AppAgg started".to_string()))?;
+        app_sender.send(AppAggMessage::LogCritical("AppAgg started".to_string()))?;
+        app_sender.send(AppAggMessage::LogCritical(format!(
+            "{:?}",
+            config.get_path_dir_config().as_os_str()
+        )))?;
 
         let mut outgoing_downloader = OutgoingDownloader::new(config.clone(), app_sender.clone())?;
         outgoing_downloader.start_downloading();
@@ -115,6 +127,7 @@ impl TransmiticCore {
             download_state: arc_download_state,
             upload_state: arc_upload_state,
             app_sender,
+            logger: logger_arc,
         })
     }
 
@@ -130,6 +143,10 @@ impl TransmiticCore {
         new_ip: String,
         new_port: String,
     ) -> Result<(), Box<dyn Error>> {
+        self.app_sender.send(AppAggMessage::LogInfo(format!(
+            "Add user '{}'",
+            &new_nickname
+        )))?;
         self.config
             .add_new_user(new_nickname, new_public_id, new_ip, new_port)?;
         self.incoming_uploader.set_new_config(self.config.clone());
@@ -142,12 +159,18 @@ impl TransmiticCore {
         nickname: String,
         file_path: String,
     ) -> Result<(), Box<dyn Error>> {
+        self.app_sender.send(AppAggMessage::LogInfo(format!(
+            "Add user to shared '{}' - {}",
+            &nickname, &file_path
+        )))?;
         self.config.add_user_to_shared(nickname, file_path)?;
         self.incoming_uploader.set_new_config(self.config.clone());
         Ok(())
     }
 
     pub fn create_new_id(&mut self) -> Result<(), Box<dyn Error>> {
+        self.app_sender
+            .send(AppAggMessage::LogWarning("Create new ID".to_string()))?;
         self.config.create_new_id()?;
         self.incoming_uploader.set_new_config(self.config.clone());
         self.outgoing_downloader.set_new_config(self.config.clone());
@@ -157,23 +180,41 @@ impl TransmiticCore {
     }
 
     pub fn downloads_cancel_all(&mut self) {
+        self.app_sender
+            .send(AppAggMessage::LogInfo("Cancel all downloads".to_string()))
+            .ok();
         self.outgoing_downloader.downloads_cancel_all();
     }
 
     pub fn downloads_cancel_single(&mut self, nickname: String, file_path: String) {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!(
+                "Cancel single download '{}' - '{}'",
+                &nickname, &file_path
+            )))
+            .ok();
         self.outgoing_downloader
             .downloads_cancel_single(nickname, file_path);
     }
 
     pub fn downloads_resume_all(&mut self) {
+        self.app_sender
+            .send(AppAggMessage::LogInfo("Resume all downloads".to_string()))
+            .ok();
         self.outgoing_downloader.downloads_resume_all();
     }
 
     pub fn downloads_pause_all(&mut self) {
+        self.app_sender
+            .send(AppAggMessage::LogInfo("Pause all downloads".to_string()))
+            .ok();
         self.outgoing_downloader.downloads_pause_all();
     }
 
     pub fn downloads_clear_finished(&mut self) {
+        self.app_sender
+            .send(AppAggMessage::LogInfo("Clear downloads".to_string()))
+            .ok();
         let mut lock = self.download_state.write().unwrap();
         for v in lock.values_mut() {
             v.completed_downloads.clear();
@@ -181,12 +222,22 @@ impl TransmiticCore {
     }
 
     pub fn downloads_clear_finished_from_me(&mut self) {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(
+                "Clear downloads finished from me".to_string(),
+            ))
+            .ok();
         let upload_state = self.get_upload_state();
         let mut u = upload_state.write().unwrap();
         u.clear();
     }
 
     pub fn downloads_clear_invalid(&mut self) {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(
+                "Cancel invalid downloads".to_string(),
+            ))
+            .ok();
         let mut lock = self.download_state.write().unwrap();
         for v in lock.values_mut() {
             v.invalid_downloads.clear();
@@ -197,6 +248,12 @@ impl TransmiticCore {
         &mut self,
         downloads: Vec<SelectedDownload>,
     ) -> Result<(), Box<dyn Error>> {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!(
+                "Download selected '{:?}'",
+                &downloads
+            )))
+            .ok();
         self.outgoing_downloader.download_selected(downloads)?;
         Ok(())
     }
@@ -206,6 +263,9 @@ impl TransmiticCore {
     }
 
     pub fn set_port(&mut self, port: String) -> Result<(), Box<dyn Error>> {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!("Set port '{}'", &port)))
+            .ok();
         self.config.set_port(port)?;
         self.incoming_uploader.set_new_config(self.config.clone());
         Ok(())
@@ -235,6 +295,39 @@ impl TransmiticCore {
         self.sharing_state.clone()
     }
 
+    pub fn get_log_messages(&self) -> Vec<String> {
+        let logger_guard = self.logger.lock().unwrap_or_else(|err| err.into_inner());
+        logger_guard.get_log_messages()
+    }
+
+    pub fn get_log_level(&self) -> LogLevel {
+        let logger_guard = self.logger.lock().unwrap_or_else(|err| err.into_inner());
+        logger_guard.get_log_level()
+    }
+
+    pub fn is_log_to_file(&self) -> bool {
+        let logger_guard = self.logger.lock().unwrap_or_else(|err| err.into_inner());
+        logger_guard.get_is_file_logging()
+    }
+
+    pub fn log_to_file_start(&mut self) {
+        self.app_sender
+            .send(AppAggMessage::LogToFileState(true))
+            .unwrap();
+    }
+
+    pub fn log_to_file_stop(&mut self) {
+        self.app_sender
+            .send(AppAggMessage::LogToFileState(false))
+            .unwrap();
+    }
+
+    pub fn set_log_level(&mut self, log_level: LogLevel) {
+        self.app_sender
+            .send(AppAggMessage::SetLogLevel(log_level))
+            .unwrap();
+    }
+
     pub fn get_shared_users(&self) -> Vec<SharedUser> {
         self.config.get_shared_users()
     }
@@ -257,6 +350,12 @@ impl TransmiticCore {
     }
 
     pub fn remove_file_from_sharing(&mut self, file_path: String) -> Result<(), Box<dyn Error>> {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!(
+                "Remove from sharing '{}'",
+                &file_path
+            )))
+            .ok();
         self.config.remove_file_from_sharing(file_path)?;
         self.incoming_uploader.set_new_config(self.config.clone());
         Ok(())
@@ -267,12 +366,24 @@ impl TransmiticCore {
         nickname: String,
         file_path: String,
     ) -> Result<(), Box<dyn Error>> {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!(
+                "Remove user from sharing '{}' - '{}'",
+                &nickname, &file_path
+            )))
+            .ok();
         self.config.remove_user_from_sharing(nickname, file_path)?;
         self.incoming_uploader.set_new_config(self.config.clone());
         Ok(())
     }
 
     pub fn remove_user(&mut self, nickname: String) -> Result<(), Box<dyn Error>> {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!(
+                "Remove user '{}'",
+                &nickname
+            )))
+            .ok();
         self.config.remove_user(nickname.clone())?;
         self.incoming_uploader.set_new_config(self.config.clone());
         self.outgoing_downloader.set_new_config(self.config.clone());
@@ -281,6 +392,12 @@ impl TransmiticCore {
     }
 
     pub fn set_my_sharing_state(&mut self, sharing_state: SharingState) {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!(
+                "Set my sharing state '{:?}'",
+                &sharing_state
+            )))
+            .ok();
         self.incoming_uploader
             .set_my_sharing_state(sharing_state.clone());
         self.sharing_state = sharing_state;
@@ -297,6 +414,12 @@ impl TransmiticCore {
         nickname: String,
         is_allowed: bool,
     ) -> Result<(), Box<dyn Error>> {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!(
+                "Set user is allowed state '{:?}' '{:?}'",
+                &nickname, &is_allowed
+            )))
+            .ok();
         self.config
             .set_user_is_allowed_state(nickname, is_allowed)?;
         self.incoming_uploader.set_new_config(self.config.clone());
@@ -314,7 +437,12 @@ impl TransmiticCore {
         // Need to pull existing name and public id from UI and new nickname and public id
         // If nickname changes, need to write config, stop existing download, wait for existing download to stop,
         //  change name of download folder, then allow update_user function to return.
-
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!(
+                "Update user '{}' - '{}' - '{}' - '{}'",
+                &nickname, &new_public_id, &new_ip, &new_port
+            )))
+            .ok();
         self.config
             .update_user(nickname.clone(), new_public_id, new_ip, new_port)?;
         self.incoming_uploader.set_new_config(self.config.clone());
