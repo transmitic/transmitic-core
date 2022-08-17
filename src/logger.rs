@@ -48,6 +48,10 @@ impl Logger {
         }
     }
 
+    pub fn get_log_path(&self) -> PathBuf {
+        self.log_path.clone()
+    }
+
     pub fn set_log_level(&mut self, log_level: LogLevel) {
         self.active_log_level = log_level;
     }

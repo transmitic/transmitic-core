@@ -1,6 +1,7 @@
 use crate::{
     app_aggregator::{
-        AppAggMessage, CompletedMessage, InProgressMessage, InvalidFileMessage, OfflineMessage,
+        AppAggMessage, CompletedMessage, InProgressMessage, InvalidFileMessage,
+        OfflineErrorMessage, OfflineMessage,
     },
     config,
     core_consts::{MSG_FILE_CHUNK, MSG_FILE_FINISHED, MSG_FILE_SELECTION_CONTINUE},
@@ -31,6 +32,7 @@ use crate::{
 };
 
 const ERR_REC_DISCONNECTED: &str = "Uploader receiver disconnected";
+pub const ERR_REMOTE_ID_MISMATCH: &str = "PublicID for user is rejected.";
 
 struct InternalRefreshData {
     pub data: Result<SharedFile, String>,
@@ -149,11 +151,21 @@ impl OutgoingDownloader {
                                 continue_run = false;
                             }
                             thread_app_sender
-                                .send(AppAggMessage::LogDebug(format!(
-                                    "Downloader run error. {} - {}",
-                                    nickname, e
+                                .send(AppAggMessage::LogError(format!(
+                                    "Downloader run error. '{}' - {}",
+                                    nickname.clone(),
+                                    e
                                 )))
                                 .unwrap();
+                            if e.to_string().starts_with(ERR_REMOTE_ID_MISMATCH) {
+                                thread_app_sender
+                                    .send(AppAggMessage::OfflineError(OfflineErrorMessage {
+                                        nickname: nickname.clone(),
+                                        error: ERR_REMOTE_ID_MISMATCH.to_string(),
+                                    }))
+                                    .unwrap();
+                                thread::sleep(time::Duration::from_secs(30));
+                            }
                         }
                     }
                 }));
@@ -163,7 +175,7 @@ impl OutgoingDownloader {
                     Err(e) => {
                         // Panic occurred
                         thread_app_sender
-                            .send(AppAggMessage::LogDebug(format!(
+                            .send(AppAggMessage::LogCritical(format!(
                                 "Downloader run panic. {} - {:?}",
                                 nickname, e
                             )))

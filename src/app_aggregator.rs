@@ -38,6 +38,11 @@ pub struct OfflineMessage {
     pub download_queue: VecDeque<String>,
 }
 
+pub struct OfflineErrorMessage {
+    pub nickname: String,
+    pub error: String,
+}
+
 pub enum AppAggMessage {
     LogDebug(String),
     LogInfo(String),
@@ -50,6 +55,7 @@ pub enum AppAggMessage {
     InProgress(InProgressMessage),
     Completed(CompletedMessage),
     Offline(OfflineMessage),
+    OfflineError(OfflineErrorMessage),
     UploadStateChange(SingleUploadState),
     UploadDisconnected(String),
     AppFailedKill(String),
@@ -175,11 +181,28 @@ fn app_loop(
                     Some(h) => {
                         h.is_online = false;
                         h.download_queue = f.download_queue;
+                        h.error = None;
                     }
                     None => {
                         let mut s = SingleDownloadState::default();
                         s.is_online = false;
                         s.download_queue = f.download_queue;
+                        s.error = None;
+                        l.insert(f.nickname, s);
+                    }
+                }
+            }
+            AppAggMessage::OfflineError(f) => {
+                let mut l = download_state.write().unwrap();
+                match l.get_mut(&f.nickname) {
+                    Some(h) => {
+                        h.is_online = false;
+                        h.error = Some(f.error);
+                    }
+                    None => {
+                        let mut s = SingleDownloadState::default();
+                        s.is_online = false;
+                        s.error = Some(f.error);
                         l.insert(f.nickname, s);
                     }
                 }

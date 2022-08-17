@@ -2,7 +2,8 @@ use core::time;
 use std::{
     error::Error,
     io::{Read, Write},
-    net::TcpStream, thread,
+    net::TcpStream,
+    thread,
 };
 
 use rand_core::OsRng;
@@ -14,6 +15,7 @@ use crate::{
     core_consts::{TRAN_API_MAJOR, TRAN_API_MINOR, TRAN_MAGIC_NUMBER},
     crypto,
     encrypted_stream::EncryptedStream,
+    outgoing_downloader::ERR_REMOTE_ID_MISMATCH,
 };
 
 const BUFFER_SIZE: usize = 32 + 64;
@@ -150,8 +152,7 @@ impl TransmiticStream {
         ) {
             Ok(_) => {}
             Err(e) => {
-                thread::sleep(time::Duration::from_secs(30));
-                return Err(format!("Remote ID does not match. {}", e).into());
+                return Err(format!("{} {}", ERR_REMOTE_ID_MISMATCH, e).into());
             }
         }
 

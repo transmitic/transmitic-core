@@ -37,6 +37,7 @@ pub struct TransmiticCore {
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
     app_sender: Sender<AppAggMessage>,
     logger: Arc<Mutex<Logger>>,
+    log_path: PathBuf,
 }
 
 // TODO allow empty IP, port, and PublicIDs. "placeholder" users
@@ -64,6 +65,7 @@ pub struct SingleDownloadState {
     pub invalid_downloads: Vec<String>,
     pub completed_downloads: Vec<CompletedMessage>,
     pub is_online: bool,
+    pub error: Option<String>,
 }
 
 impl Default for SingleDownloadState {
@@ -77,6 +79,7 @@ impl Default for SingleDownloadState {
             invalid_downloads: Vec::new(),
             completed_downloads: Vec::new(),
             is_online: true,
+            error: None,
         }
     }
 }
@@ -92,6 +95,7 @@ impl TransmiticCore {
         let is_log_to_file = DEFAULT_LOG_TO_FILE;
         let log_level = DEFAULT_LOG_LEVEL;
         let logger = Logger::new(log_level, is_log_to_file);
+        let log_path = logger.get_log_path();
         let logger_arc = Arc::new(Mutex::new(logger));
         let logger_clone = Arc::clone(&logger_arc);
 
@@ -128,6 +132,7 @@ impl TransmiticCore {
             upload_state: arc_upload_state,
             app_sender,
             logger: logger_arc,
+            log_path,
         })
     }
 
@@ -293,6 +298,10 @@ impl TransmiticCore {
 
     pub fn get_my_sharing_state(&self) -> SharingState {
         self.sharing_state.clone()
+    }
+
+    pub fn get_log_path(&self) -> PathBuf {
+        self.log_path.clone()
     }
 
     pub fn get_log_messages(&self) -> Vec<String> {

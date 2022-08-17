@@ -339,12 +339,20 @@ impl SingleUploader {
             return Ok(());
         }
 
+        self.app_sender.send(AppAggMessage::LogInfo(format!(
+            "User trying to connect: '{}'",
+            self.nickname
+        )))?;
         let mut transmitic_stream = TransmiticStream::new(
             stream.try_clone()?,
             shared_user.clone(),
             self.config.get_local_private_id_bytes(),
         );
         let mut encrypted_stream = transmitic_stream.wait_for_incoming()?;
+        self.app_sender.send(AppAggMessage::LogInfo(format!(
+            "User successfully connected: '{}'",
+            self.nickname
+        )))?;
 
         let everything_file =
             get_everything_file(&self.app_sender, &self.config, &shared_user.nickname)?;
