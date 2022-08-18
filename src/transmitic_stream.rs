@@ -1,9 +1,7 @@
-use core::time;
 use std::{
     error::Error,
     io::{Read, Write},
     net::TcpStream,
-    thread,
 };
 
 use rand_core::OsRng;
