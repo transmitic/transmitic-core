@@ -1,5 +1,10 @@
 use std::{
-    collections::VecDeque, env, fs::OpenOptions, io::Write, path::PathBuf, time::SystemTime,
+    collections::VecDeque,
+    env,
+    fs::{self, OpenOptions},
+    io::Write,
+    path::PathBuf,
+    time::SystemTime,
 };
 
 pub static LOG_MESSAGES_COUNT: usize = 1000;
@@ -38,6 +43,7 @@ impl Logger {
         let mut log_path = env::current_exe().unwrap();
         log_path.pop();
         log_path.push("transmitic_log.txt");
+        fs::remove_file(&log_path).ok();
 
         Logger {
             log_lines: VecDeque::with_capacity(1000),
