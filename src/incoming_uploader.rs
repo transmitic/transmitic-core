@@ -489,7 +489,7 @@ impl SingleUploader {
             while read_response != 0 {
                 read_response = f.read(&mut read_buffer)?;
 
-                encrypted_stream.write(MSG_FILE_CHUNK, &read_buffer[0..read_response].to_vec())?;
+                encrypted_stream.write(MSG_FILE_CHUNK, &read_buffer[0..read_response])?;
 
                 current_sent_bytes += read_response;
                 download_percent = (((current_sent_bytes as f64) / file_size_f64) * 100_f64) as u64;

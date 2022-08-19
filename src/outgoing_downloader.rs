@@ -265,7 +265,7 @@ impl OutgoingDownloader {
             }
         }
 
-        return Err(format!("Failed to find shared user {}", nickname).into());
+        Err(format!("Failed to find shared user {}", nickname).into())
     }
 
     pub fn downloads_pause_all(&mut self) {
@@ -1094,9 +1094,9 @@ fn sanitize_disk_path(path: &str) -> Result<String, Box<dyn Error>> {
         return Ok(new_path);
     }
 
-    return Err(format!(
+    Err(format!(
         "Path could not be sanitized after {} tries. {}",
         max_attempts, original_path
     )
-    .into());
+    .into())
 }

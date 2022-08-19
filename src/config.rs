@@ -157,11 +157,11 @@ impl Config {
                 return Ok(());
             }
         }
-        return Err(format!(
+        Err(format!(
             "Could not find file '{}' to share with user '{}'.",
             file_path, nickname
         )
-        .into());
+        .into())
     }
 
     pub fn get_local_key_pair(&self) -> Ed25519KeyPair {
@@ -287,11 +287,11 @@ impl Config {
             }
         }
 
-        return Err(format!(
+        Err(format!(
             "Could not find user '{}' to set Allowed state '{}'.",
             nickname, is_allowed
         )
-        .into());
+        .into())
     }
 
     pub fn update_user(
@@ -313,7 +313,7 @@ impl Config {
             }
         }
 
-        return Err(format!("Failed to find user '{}'. Could not update user.", nickname).into());
+        Err(format!("Failed to find user '{}'. Could not update user.", nickname).into())
     }
 
     fn write_and_set_config(&mut self, config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
