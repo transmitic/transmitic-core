@@ -91,14 +91,14 @@ impl Logger {
 
         // TODO duped strings with UI
         let log_string = match log_level {
-            LogLevel::Critical => "CRITICAL",
-            LogLevel::Error => "ERROR",
-            LogLevel::Warning => "WARNING",
-            LogLevel::Info => "INFO",
-            LogLevel::Debug => "DEBUG",
+            LogLevel::Critical => "[CRITICAL]",
+            LogLevel::Error =>    "[ERROR]   ",
+            LogLevel::Warning =>  "[WARNING] ",
+            LogLevel::Info =>     "[INFO]    ",
+            LogLevel::Debug =>    "[DEBUG]   ",
         };
 
-        let message = format!("[{}] {} | {}", log_string, time_string, message);
+        let message = format!("{} {} |  {}", log_string, time_string, message);
         println!("{}", message);
 
         while self.log_lines.len() >= LOG_MESSAGES_COUNT {
