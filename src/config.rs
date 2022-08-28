@@ -81,7 +81,10 @@ impl Config {
             if file.starts_with("file://") {
                 file = file[7..].to_string();
             }
-            file = file.replace('/', "\\");
+
+            if cfg!(target_family = "windows") {
+                file = file.replace('/', "\\");
+            }
 
             // File already shared, don't readd it
             if existing_paths.contains(&file) {
@@ -424,7 +427,9 @@ fn sanitize_config(config_file: &mut ConfigFile) {
             file.path = file.path[7..].to_string();
         }
 
-        file.path = file.path.replace('/', "\\");
+        if cfg!(target_family = "windows") {
+            file.path = file.path.replace('/', "\\");
+        }
 
         for i in 0..file.shared_with.len() {
             file.shared_with[i] = file.shared_with[i].trim().to_string();
@@ -441,7 +446,7 @@ fn verify_config_port(port: &str) -> Result<(), Box<dyn Error>> {
 
     let max_port = 65535;
     if port > 65535 {
-        return Err(format!("Highest port value possible is {}", max_port).into())
+        return Err(format!("Highest port value possible is {}", max_port).into());
     }
 
     Ok(())
@@ -465,21 +470,49 @@ fn get_blocked_file_name_chars() -> String {
     let mut block_chars = get_blocked_file_path_chars();
     block_chars.push('\\');
     block_chars.push(':');
+    block_chars.push('/');
     block_chars
 }
 
 fn get_blocked_file_path_chars() -> String {
-    String::from("/*?\"<>|")
+    String::from("*?\"<>|")
 }
 
 pub fn file_contains_only_valid_chars(path: &str) -> bool {
+    let mut path = path.to_string();
+    if cfg!(target_family = "unix") {
+        path = path.replace('\\', "/");
+    }
     for c in get_blocked_file_path_chars().chars() {
         if path.contains(c) {
             return false;
         }
     }
 
+    // Invalid chars  TODO ^ duped with above?
+    let path = Path::new(&path);
+    for (index, part) in path.iter().enumerate() {
+        let s = part.to_str().unwrap().to_string();
+
+        // drive eg c:
+        if index == 0 && s.len() == 2 && s.chars().nth(1) == Some(':') {
+            continue;
+        }
+
+        // Just a path sep
+        if s == "/" || s == "\\" {
+            continue;
+        }
+
+        for c in get_blocked_file_name_chars().chars() {
+            if s.contains(c) {
+                return false;
+            }
+        }
+    }
+
     // Remove .. paths, anything relative etc
+    // If a "part" only contains periods, reject it
     let path = Path::new(&path);
     for part in path.iter() {
         let mut keep = false;

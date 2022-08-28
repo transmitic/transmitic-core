@@ -10,7 +10,6 @@ use crate::{
     utils::get_file_by_path,
 };
 use core::time;
-use std::fmt::Write as _;
 use std::{
     collections::{HashMap, VecDeque},
     error::Error,
@@ -20,6 +19,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
 };
+use std::{fmt::Write as _, path};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -573,7 +573,7 @@ impl SingleDownloader {
             .to_str()
             .unwrap()
             .to_string();
-        root_download_dir.push('\\');
+        root_download_dir.push(path::MAIN_SEPARATOR);
 
         // TODO the inner loop logic in a function that will loop and handle errors to prevent the outer thread loop from restarting the above code?
         loop {
@@ -729,7 +729,7 @@ impl SingleDownloader {
         if shared_file.is_directory {
             let mut new_download_dir = String::from(download_dir);
             new_download_dir.push_str(&current_path_name);
-            new_download_dir.push('\\');
+            new_download_dir.push(path::MAIN_SEPARATOR);
             for a_file in &shared_file.files {
                 self.download_shared_file(
                     encrypted_stream,
@@ -1072,6 +1072,9 @@ fn sanitize_disk_path(path: &str) -> Result<String, Box<dyn Error>> {
     let max_attempts = 10;
     let original_path = path.to_string();
     let mut compare_path = original_path.clone();
+    if cfg!(target_family = "unix") {
+        compare_path = compare_path.replace('\\', "/");
+    }
     let mut new_path = compare_path.clone();
 
     while counter < max_attempts {
