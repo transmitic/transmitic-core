@@ -6,6 +6,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::panic::AssertUnwindSafe;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::SystemTime;
 use std::{panic, thread};
 
 use crate::app_aggregator::AppAggMessage;
@@ -380,6 +381,12 @@ impl SingleUploader {
         everything_file: &SharedFile,
         everything_file_json_bytes: &[u8],
     ) -> Result<(), Box<dyn Error>> {
+        let mut progress_current_time =
+            match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+                Ok(s) => s.as_secs(),
+                Err(_) => 0,
+            };
+
         encrypted_stream.read()?;
 
         self.read_receiver()?;
@@ -486,6 +493,7 @@ impl SingleUploader {
             let mut current_sent_bytes: usize = file_seek_point as usize;
             let mut download_percent: u64;
             let file_size_f64: f64 = client_shared_file.file_size as f64;
+            let mut update_progress = false;
             while read_response != 0 {
                 read_response = f.read(&mut read_buffer)?;
 
@@ -494,17 +502,35 @@ impl SingleUploader {
                 current_sent_bytes += read_response;
                 download_percent = (((current_sent_bytes as f64) / file_size_f64) * 100_f64) as u64;
 
-                self.app_sender
-                    .send(AppAggMessage::UploadStateChange(SingleUploadState {
-                        nickname: self.nickname.clone(),
-                        path: client_file_choice.to_string(),
-                        percent: if download_percent < 100 {
-                            download_percent
-                        } else {
-                            99
-                        }, // 100 will be sent outside this loop
-                        is_online: true,
-                    }))?;
+                // Throttle updates
+                match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+                    Ok(s) => {
+                        let new_time = s.as_secs();
+                        if new_time - progress_current_time > 1 {
+                            update_progress = true;
+                            progress_current_time = new_time;
+                        }
+                    }
+                    Err(_) => {
+                        update_progress = true;
+                    }
+                };
+
+                if update_progress {
+                    update_progress = false;
+
+                    self.app_sender
+                        .send(AppAggMessage::UploadStateChange(SingleUploadState {
+                            nickname: self.nickname.clone(),
+                            path: client_file_choice.to_string(),
+                            percent: if download_percent < 100 {
+                                download_percent
+                            } else {
+                                99
+                            }, // 100 will be sent outside this loop
+                            is_online: true,
+                        }))?;
+                }
 
                 self.read_receiver()?;
                 if self.should_shutdown {
