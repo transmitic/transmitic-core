@@ -6,7 +6,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::panic::AssertUnwindSafe;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
-use std::time::SystemTime;
+use std::time::Instant;
 use std::{panic, thread};
 
 use crate::app_aggregator::AppAggMessage;
@@ -381,11 +381,7 @@ impl SingleUploader {
         everything_file: &SharedFile,
         everything_file_json_bytes: &[u8],
     ) -> Result<(), Box<dyn Error>> {
-        let mut progress_current_time =
-            match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-                Ok(s) => s.as_secs(),
-                Err(_) => 0,
-            };
+        let mut progress_current_time = Instant::now();
 
         encrypted_stream.read()?;
 
@@ -503,18 +499,10 @@ impl SingleUploader {
                 download_percent = (((current_sent_bytes as f64) / file_size_f64) * 100_f64) as u64;
 
                 // Throttle updates
-                match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-                    Ok(s) => {
-                        let new_time = s.as_secs();
-                        if new_time - progress_current_time > 1 {
-                            update_progress = true;
-                            progress_current_time = new_time;
-                        }
-                    }
-                    Err(_) => {
-                        update_progress = true;
-                    }
-                };
+                if progress_current_time.elapsed().as_secs() > 1 {
+                    update_progress = true;
+                    progress_current_time = Instant::now();
+                }
 
                 if update_progress {
                     update_progress = false;

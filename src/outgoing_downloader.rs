@@ -18,7 +18,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
-    time::SystemTime,
+    time::Instant,
 };
 use std::{fmt::Write as _, path};
 
@@ -516,7 +516,7 @@ struct SingleDownloader {
     active_download_local_path: Option<String>,
     active_download_total_size: String,
     shutdown: bool,
-    progress_current_time: u64,
+    progress_current_time: Instant,
 }
 
 impl SingleDownloader {
@@ -529,10 +529,7 @@ impl SingleDownloader {
         is_downloading_paused: bool,
     ) -> SingleDownloader {
         let download_queue = VecDeque::new();
-        let progress_current_time = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(s) => s.as_secs(),
-            Err(_) => 0,
-        };
+        let progress_current_time = Instant::now();
 
         SingleDownloader {
             receiver,
@@ -810,18 +807,10 @@ impl SingleDownloader {
                 f.write_all(&payload_bytes)?;
 
                 // Throttle updates
-                match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-                    Ok(s) => {
-                        let new_time = s.as_secs();
-                        if new_time - self.progress_current_time > 1 {
-                            self.app_update_in_progress()?;
-                            self.progress_current_time = new_time;
-                        }
-                    }
-                    Err(_) => {
-                        self.app_update_in_progress()?;
-                    }
-                };
+                if self.progress_current_time.elapsed().as_secs() > 1 {
+                    self.app_update_in_progress()?;
+                    self.progress_current_time = Instant::now();
+                }
 
                 encrypted_stream.read()?;
 
