@@ -4,6 +4,7 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 use std::thread;
 
+use crate::incoming_uploader::IncomingUploaderError;
 use crate::logger::{LogLevel, Logger};
 use crate::transmitic_core::{SingleDownloadState, SingleUploadState};
 
@@ -58,6 +59,8 @@ pub enum AppAggMessage {
     OfflineError(OfflineErrorMessage),
     UploadStateChange(SingleUploadState),
     UploadDisconnected(String),
+    UploadErrorGeneric(String),
+    UploadErrorPortInUse,
     AppFailedKill(String),
 }
 
@@ -65,11 +68,18 @@ pub fn run_app_loop(
     downlaod_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
     logger: Arc<Mutex<Logger>>,
+    incoming_uploader_error: Arc<Mutex<Option<IncomingUploaderError>>>,
 ) -> Sender<AppAggMessage> {
     let (sender, receiver): (Sender<AppAggMessage>, Receiver<AppAggMessage>) = mpsc::channel();
 
     thread::spawn(move || {
-        app_loop(receiver, downlaod_state, upload_state, logger);
+        app_loop(
+            receiver,
+            downlaod_state,
+            upload_state,
+            logger,
+            incoming_uploader_error,
+        );
     });
 
     sender
@@ -87,6 +97,7 @@ fn app_loop(
     download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
     logger: Arc<Mutex<Logger>>,
+    incoming_uploader_error: Arc<Mutex<Option<IncomingUploaderError>>>,
 ) {
     loop {
         let msg = match receiver.recv() {
@@ -243,6 +254,30 @@ fn app_loop(
             AppAggMessage::LogToFileState(state) => {
                 let mut logger_guard = logger.lock().unwrap_or_else(|err| err.into_inner());
                 logger_guard.set_is_file_logging(state);
+            }
+            AppAggMessage::UploadErrorGeneric(string) => {
+                log_message(
+                    &logger,
+                    format!("Uploading Error. Sharing has stopped.: {}", string),
+                    LogLevel::Error,
+                );
+
+                let mut incoming_error_guard = incoming_uploader_error
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner());
+                *incoming_error_guard = Some(IncomingUploaderError::Generic(string));
+            }
+            AppAggMessage::UploadErrorPortInUse => {
+                log_message(
+                    &logger,
+                    "Uploading Error. Port already in use. Sharing has stopped.".to_string(),
+                    LogLevel::Error,
+                );
+
+                let mut incoming_error_guard = incoming_uploader_error
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner());
+                *incoming_error_guard = Some(IncomingUploaderError::PortInUse);
             }
         }
     }

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     app_aggregator::{run_app_loop, AppAggMessage, CompletedMessage},
     config::{self, Config, ConfigSharedFile, SharedUser},
-    incoming_uploader::{IncomingUploader, SharingState},
+    incoming_uploader::{IncomingUploader, IncomingUploaderError, SharingState},
     logger::{LogLevel, Logger, DEFAULT_LOG_LEVEL, DEFAULT_LOG_TO_FILE},
     outgoing_downloader::OutgoingDownloader,
     shared_file::{RefreshData, SelectedDownload},
@@ -33,6 +33,7 @@ pub struct TransmiticCore {
     sharing_state: SharingState,
     outgoing_downloader: OutgoingDownloader,
     incoming_uploader: IncomingUploader,
+    incoming_uploader_error: Arc<Mutex<Option<IncomingUploaderError>>>,
     download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
     app_sender: Sender<AppAggMessage>,
@@ -109,7 +110,16 @@ impl TransmiticCore {
         let arc_download_state = Arc::new(download_state_lock);
         let arc_clone = Arc::clone(&arc_download_state);
 
-        let app_sender = run_app_loop(arc_clone, arc_upload_clone, logger_clone);
+        let incoming_uploader_error: Option<IncomingUploaderError> = None;
+        let incoming_uploader_error_arc = Arc::new(Mutex::new(incoming_uploader_error));
+        let incoming_uploader_error_clone = incoming_uploader_error_arc.clone();
+
+        let app_sender = run_app_loop(
+            arc_clone,
+            arc_upload_clone,
+            logger_clone,
+            incoming_uploader_error_clone,
+        );
 
         app_sender.send(AppAggMessage::LogCritical("AppAgg started".to_string()))?;
         app_sender.send(AppAggMessage::LogCritical(format!(
@@ -128,6 +138,7 @@ impl TransmiticCore {
             sharing_state: SharingState::Off,
             outgoing_downloader,
             incoming_uploader,
+            incoming_uploader_error: incoming_uploader_error_arc,
             download_state: arc_download_state,
             upload_state: arc_upload_state,
             app_sender,
@@ -290,6 +301,24 @@ impl TransmiticCore {
 
     pub fn get_public_id_string(&self) -> String {
         self.config.get_public_id_string()
+    }
+
+    pub fn get_and_reset_my_sharing_error(&mut self) -> Option<IncomingUploaderError> {
+        let mut incoming_error_guard = self
+            .incoming_uploader_error
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+
+        let error: Option<IncomingUploaderError> = incoming_error_guard.clone();
+
+        *incoming_error_guard = None;
+        drop(incoming_error_guard);
+
+        if error.is_some() {
+            self.set_my_sharing_state(SharingState::Off);
+        }
+
+        error
     }
 
     pub fn get_my_sharing_files(&self) -> Vec<ConfigSharedFile> {

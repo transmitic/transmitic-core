@@ -36,6 +36,12 @@ enum MessageUploadManager {
     NewConfig(Config),
 }
 
+#[derive(Clone)]
+pub enum IncomingUploaderError {
+    PortInUse,
+    Generic(String),
+}
+
 pub struct IncomingUploader {
     sender: Sender<MessageUploadManager>,
 }
@@ -44,18 +50,38 @@ impl IncomingUploader {
     pub fn new(config: Config, app_sender: Sender<AppAggMessage>) -> IncomingUploader {
         let (sx, rx): (Sender<MessageUploadManager>, Receiver<MessageUploadManager>) =
             mpsc::channel();
+        let sx_clone = sx.clone();
 
         thread::spawn(move || {
+            let upload_sender = sx_clone.clone();
+            let app_sender_loop = app_sender.clone();
             let mut uploader_manager =
                 UploaderManager::new(rx, config, SharingState::Off, app_sender);
-            match uploader_manager.run() {
-                Ok(_) => {
-                    eprintln!("UploadManager run ended");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("UploadManager run failed {}", e);
-                    std::process::exit(1);
+            loop {
+                match uploader_manager.run() {
+                    Ok(_) => {
+                        eprintln!("UploadManager run ended");
+                        std::process::exit(1);
+                    }
+                    Err(e) => {
+                        upload_sender
+                            .send(MessageUploadManager::SharingStateMsg(SharingState::Off))
+                            .ok();
+
+                        let e_string = e.to_string();
+                        match e.downcast::<std::io::Error>() {
+                            Ok(io_e) if io_e.kind() == std::io::ErrorKind::AddrInUse => {
+                                app_sender_loop
+                                    .send(AppAggMessage::UploadErrorPortInUse)
+                                    .unwrap();
+                            }
+                            _ => {
+                                app_sender_loop
+                                    .send(AppAggMessage::UploadErrorGeneric(e_string))
+                                    .unwrap();
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -64,6 +90,7 @@ impl IncomingUploader {
     }
 
     pub fn set_my_sharing_state(&self, sharing_state: SharingState) {
+        // Check uploader_manager.run() too
         match self
             .sender
             .send(MessageUploadManager::SharingStateMsg(sharing_state))
@@ -77,6 +104,7 @@ impl IncomingUploader {
     }
 
     pub fn set_new_config(&self, new_config: Config) {
+        // Check uploader_manager.run() too
         match self
             .sender
             .send(MessageUploadManager::NewConfig(new_config))
