@@ -3,9 +3,9 @@ use std::error::Error;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
+use aes_gcm::aead::generic_array::GenericArray;
 use aes_gcm::aead::AeadMut;
-use aes_gcm::aead::{generic_array::GenericArray, NewAead};
-use aes_gcm::Aes256Gcm;
+use aes_gcm::{Aes256Gcm, KeyInit};
 
 use crate::core_consts::{
     MSG_TYPE_SIZE, PAYLOAD_OFFSET, PAYLOAD_SIZE_LEN, TOTAL_BUFFER_SIZE, TOTAL_CRYPTO_BUFFER_SIZE,

@@ -725,7 +725,7 @@ impl SingleDownloader {
         &mut self,
         encrypted_stream: &mut EncryptedStream,
         shared_file: &SharedFile,
-        root_download_dir: &str,
+        _root_download_dir: &str,
         download_dir: &str,
     ) -> Result<(), Box<dyn Error>> {
         let current_path_name = get_sanitized_disk_file_name(shared_file)?;
@@ -738,7 +738,7 @@ impl SingleDownloader {
                 self.download_shared_file(
                     encrypted_stream,
                     a_file,
-                    root_download_dir,
+                    _root_download_dir,
                     &new_download_dir,
                 )?;
 
@@ -749,7 +749,7 @@ impl SingleDownloader {
             }
         } else {
             // Create directory for file download
-            fs::create_dir_all(&download_dir)?;
+            fs::create_dir_all(download_dir)?;
             let mut destination_path = download_dir.to_string();
             destination_path.push_str(&current_path_name);
             //println!("Saving to: {}", destination_path);
