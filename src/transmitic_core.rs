@@ -89,8 +89,7 @@ impl Default for SingleDownloadState {
 //  active download VS in progress
 //  owner vs nickname
 impl TransmiticCore {
-    pub fn new() -> Result<TransmiticCore, Box<dyn Error>> {
-        let config = Config::new()?;
+    pub fn new(config: Config) -> Result<TransmiticCore, Box<dyn Error>> {
         let is_first_start = config.is_first_start();
 
         let is_log_to_file = DEFAULT_LOG_TO_FILE;
@@ -145,6 +144,36 @@ impl TransmiticCore {
             logger: logger_arc,
             log_path,
         })
+    }
+
+    pub fn is_config_encrypted(&self) -> bool {
+        self.config.is_config_encrypted()
+    }
+
+    pub fn decrypt_config(&mut self) -> Result<(), Box<dyn Error>> {
+        match self.config.decrypt_config() {
+            Ok(o) => Ok(o),
+            Err(e) => {
+                self.app_sender.send(AppAggMessage::LogError(format!(
+                    "Failed to decrypt config '{:?}'",
+                    e
+                )))?;
+                Err(e)?
+            }
+        }
+    }
+
+    pub fn encrypt_config(&mut self, password: String) -> Result<(), Box<dyn Error>> {
+        match self.config.encrypt_config(password) {
+            Ok(o) => Ok(o),
+            Err(e) => {
+                self.app_sender.send(AppAggMessage::LogError(format!(
+                    "Failed to encrypt config '{:?}'",
+                    e
+                )))?;
+                Err(e)?
+            }
+        }
     }
 
     pub fn add_files(&mut self, files: Vec<String>) -> Result<(), Box<dyn Error>> {

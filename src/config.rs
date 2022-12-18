@@ -3,9 +3,20 @@ use std::error::Error;
 use std::fs;
 use std::fs::metadata;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
+
+use aes_gcm::aead::generic_array::GenericArray;
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
+};
+use ring::{
+    digest, pbkdf2,
+    rand::{SecureRandom, SystemRandom},
+};
 
 extern crate base64;
 use ring::signature;
@@ -16,6 +27,17 @@ use serde::{Deserialize, Serialize};
 use crate::app_aggregator::AppAggMessage;
 use crate::crypto;
 use crate::shared_file::SharedFile;
+
+// Third party
+static PBKDF2_ALG: pbkdf2::Algorithm = pbkdf2::PBKDF2_HMAC_SHA256;
+const CREDENTIAL_LEN: usize = digest::SHA256_OUTPUT_LEN;
+pub type Credential = [u8; CREDENTIAL_LEN];
+
+// Transmitic
+const CONFIG_VERSION: u16 = 0;
+const PBKDF2_ITERATIONS: u32 = 310_000;
+const NONCE_MAX: u128 = 79_228_162_514_264_337_593_543_950_335;
+const NONCE_INIT: u128 = 0;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConfigSharedFile {
@@ -48,24 +70,90 @@ pub struct Config {
     config_file: ConfigFile,
     local_private_key_bytes: Vec<u8>,
     path_dir_config: PathBuf,
+    password: Option<String>,
+    nonce: u128,
+    iterations: u32,
+    config_version: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EncryptedConfig {
+    version: u16,
+    nonce: String,
+    pbkdf2_iterations: u32,
+    salt: String,
+    encrypted_config: String,
 }
 
 // TODO Config is passed around and has methods that should NOT be allowed to be called everywhere
+// TODO getting config paths multiple times, redundant
 impl Config {
-    pub fn new() -> Result<Config, Box<dyn Error>> {
+    pub fn new(is_first_start: bool, password: Option<String>) -> Result<Config, Box<dyn Error>> {
         create_config_dir()?;
-        let first_start = init_config()?;
-        let config_file = read_config()?;
+        let nonce = NONCE_INIT;
+        let iterations = PBKDF2_ITERATIONS;
+        let config_version = CONFIG_VERSION;
+        if is_first_start {
+            create_new_config(&password, &nonce, iterations, config_version)?;
+        }
+        let (config_file, nonce) = read_config(&password)?;
         let path_dir_config = get_path_transmitic_config_dir()?;
         let local_private_key_bytes =
             crypto::get_bytes_from_base64_str(&config_file.my_private_id)?;
 
         Ok(Config {
-            first_start,
+            first_start: is_first_start,
             config_file,
             local_private_key_bytes,
             path_dir_config,
+            password,
+            nonce,
+            iterations,
+            config_version,
         })
+    }
+
+    pub fn is_config_encrypted(&self) -> bool {
+        self.password.is_some()
+    }
+
+    pub fn decrypt_config(&mut self) -> Result<(), Box<dyn Error>> {
+        if !self.is_config_encrypted() {
+            return Err("Config is not encrypted. It cannot be decrypted.")?;
+        }
+
+        // backup
+        let password = self.password.clone();
+        self.password = None;
+
+        match self.write_and_set_config(&mut self.config_file.clone()) {
+            Ok(_) => {}
+            Err(e) => {
+                self.password = password;
+                return Err(e);
+            }
+        }
+
+        fs::remove_file(get_path_encrypted_config()?)?;
+
+        Ok(())
+    }
+
+    pub fn encrypt_config(&mut self, password: String) -> Result<(), Box<dyn Error>> {
+        if self.password.is_some() {
+            Err("Cannot encrypt config because it is already encrypyed")?;
+        }
+
+        self.password = Some(password);
+        match self.write_and_set_config(&mut self.config_file.clone()) {
+            Ok(_) => {}
+            Err(e) => {
+                self.password = None;
+                Err(e)?;
+            }
+        }
+        fs::remove_file(get_path_config_json()?)?;
+        Ok(())
     }
 
     pub fn add_files(&mut self, files: Vec<String>) -> Result<(), Box<dyn Error>> {
@@ -320,14 +408,29 @@ impl Config {
     }
 
     fn write_and_set_config(&mut self, config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
-        write_config(config_file)?;
+        if self.password.is_some() {
+            if self.nonce >= NONCE_MAX {
+                self.nonce = 0;
+            } else {
+                self.nonce += 1;
+            }
+        }
+
+        write_config(
+            config_file,
+            &self.password,
+            &self.nonce,
+            self.iterations,
+            self.config_version,
+        )?;
+
         self.config_file = config_file.to_owned();
 
         Ok(())
     }
 }
 
-fn create_config_dir() -> Result<(), std::io::Error> {
+pub fn create_config_dir() -> Result<(), std::io::Error> {
     let path = get_path_transmitic_config_dir()?;
     fs::create_dir_all(path)?;
     Ok(())
@@ -347,24 +450,32 @@ pub fn get_path_dir_downloads() -> Result<PathBuf, std::io::Error> {
     Ok(path)
 }
 
-fn init_config() -> Result<bool, Box<dyn Error>> {
-    let config_path = get_path_config_json()?;
-
-    if !config_path.exists() {
-        create_new_config()?;
-        return Ok(true);
+fn get_expected_config_path(encrypted: bool) -> Result<PathBuf, std::io::Error> {
+    if encrypted {
+        get_path_encrypted_config()
+    } else {
+        get_path_config_json()
     }
-
-    Ok(false)
 }
 
-fn get_path_config_json() -> Result<PathBuf, std::io::Error> {
+pub fn get_path_config_json() -> Result<PathBuf, std::io::Error> {
     let mut path = get_path_transmitic_config_dir()?;
     path.push("transmitic_config.json");
     Ok(path)
 }
 
-fn create_new_config() -> Result<(), Box<dyn Error>> {
+pub fn get_path_encrypted_config() -> Result<PathBuf, std::io::Error> {
+    let mut path = get_path_transmitic_config_dir()?;
+    path.push("transmitic_config.etrc");
+    Ok(path)
+}
+
+fn create_new_config(
+    password: &Option<String>,
+    nonce: &u128,
+    iterations: u32,
+    config_version: u16,
+) -> Result<(), Box<dyn Error>> {
     let (private_id_bytes, _) = crypto::generate_id_pair()?;
 
     let private_id_string = base64::encode(private_id_bytes);
@@ -376,16 +487,91 @@ fn create_new_config() -> Result<(), Box<dyn Error>> {
         sharing_port: "7878".to_string(),
     };
 
-    write_config(&mut empty_config)?;
+    write_config(
+        &mut empty_config,
+        password,
+        nonce,
+        iterations,
+        config_version,
+    )?;
     Ok(())
 }
 
-fn write_config(config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
+fn write_config(
+    config_file: &mut ConfigFile,
+    password: &Option<String>,
+    nonce: &u128,
+    iterations: u32,
+    config_version: u16,
+) -> Result<(), Box<dyn Error>> {
     verify_config(config_file)?;
-    let config_path = get_path_config_json()?;
-    let config_str = serde_json::to_string_pretty(config_file)?;
+    let config_path = get_expected_config_path(password.is_some())?;
+    let mut config_str = serde_json::to_string_pretty(config_file)?;
+
+    match password {
+        Some(p) => {
+            config_str =
+                get_encrypted_config_str(&config_str, p, nonce, iterations, config_version)?;
+        }
+        None => {}
+    }
+
     fs::write(config_path, config_str)?;
+
     Ok(())
+}
+
+fn get_encrypted_config_str(
+    config_str: &str,
+    password: &str,
+    nonce: &u128,
+    iterations: u32,
+    config_version: u16,
+) -> Result<String, Box<dyn Error>> {
+    // Salt
+    let mut salt: [u8; 16] = [0; 16];
+    let sran = SystemRandom::new();
+    match sran.fill(&mut salt) {
+        Ok(_) => {}
+        Err(e) => return Err(format!("Failed to fill salt. {}", e).into()),
+    }
+
+    // Derive AES key
+    let mut aes_key: Credential = [0u8; CREDENTIAL_LEN];
+    let pbkdf2_iterations = match NonZeroU32::new(iterations) {
+        Some(i) => i,
+        None => Err(format!("pbkdf2 given non zero iterations. {}", iterations))?,
+    };
+    pbkdf2::derive(
+        PBKDF2_ALG,
+        pbkdf2_iterations,
+        &salt,
+        password.as_bytes(),
+        &mut aes_key,
+    );
+
+    // Encrypt
+    let key = GenericArray::from_slice(&aes_key[..]);
+    let cipher = Aes256Gcm::new(key);
+    let nonce_bytes = nonce.to_be_bytes();
+    let aes_nonce = Nonce::from_slice(&nonce_bytes[4..]);
+    let ciphertext = match cipher.encrypt(aes_nonce, config_str.as_ref()) {
+        Ok(cipher_text) => cipher_text,
+        Err(e) => return Err(format!("Failed to encrypt config with cipher. {}", e).into()),
+    };
+    let ciphertext_b64 = base64::encode(ciphertext);
+
+    let encrypted_config = EncryptedConfig {
+        version: config_version,
+        nonce: nonce.to_string(),
+        pbkdf2_iterations: iterations,
+        salt: base64::encode(salt),
+        encrypted_config: ciphertext_b64,
+    };
+
+    let encrypted_str = serde_json::to_string_pretty(&encrypted_config)?;
+
+    Ok(encrypted_str)
 }
 
 fn verify_config(config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
@@ -690,23 +876,27 @@ fn verify_config_shared_files(
     Ok(())
 }
 
-fn read_config() -> Result<ConfigFile, Box<dyn Error>> {
-    let config_path = get_path_config_json()?;
+fn read_config(password: &Option<String>) -> Result<(ConfigFile, u128), Box<dyn Error>> {
+    let config_path = get_expected_config_path(password.is_some())?;
+
     if !config_path.exists() {
         let exit_error = format!(
-            "config.json does not exist at '{}'",
+            "config file does not exist at '{}'",
             config_path.to_string_lossy()
         );
         return Err(exit_error.into());
     }
 
-    let config_string = fs::read_to_string(&config_path)?;
+    let (config_string, nonce) = match password {
+        Some(password) => read_encrypted_config(password, &config_path)?,
+        None => (fs::read_to_string(&config_path)?, NONCE_INIT),
+    };
 
     let mut config_file: ConfigFile = match serde_json::from_str(&config_string) {
         Ok(c) => c,
         Err(e) => {
             let exit_error = format!(
-                "config.json is invalid '{}' -- {}",
+                "config is invalid '{}' -- {}",
                 config_path.to_string_lossy(),
                 e
             );
@@ -716,7 +906,47 @@ fn read_config() -> Result<ConfigFile, Box<dyn Error>> {
 
     verify_config(&mut config_file)?;
 
-    Ok(config_file)
+    Ok((config_file, nonce))
+}
+
+fn read_encrypted_config(
+    password: &String,
+    config_path: &PathBuf,
+) -> Result<(String, u128), Box<dyn Error>> {
+    let config_str = fs::read_to_string(config_path)?;
+    let encrypted_config: EncryptedConfig = serde_json::from_str(&config_str)?;
+
+    let nonce = encrypted_config.nonce.parse::<u128>()?;
+    let iterations = encrypted_config.pbkdf2_iterations;
+    let salt = base64::decode(encrypted_config.salt)?;
+    let encrypted_bytes = base64::decode(encrypted_config.encrypted_config)?;
+
+    // Derive AES key
+    let mut aes_key: Credential = [0u8; CREDENTIAL_LEN];
+    let pbkdf2_iterations = match NonZeroU32::new(iterations) {
+        Some(i) => i,
+        None => Err(format!("pbkdf2 given non zero iterations. {}", iterations))?,
+    };
+    pbkdf2::derive(
+        PBKDF2_ALG,
+        pbkdf2_iterations,
+        &salt,
+        password.as_bytes(),
+        &mut aes_key,
+    );
+
+    // Decrypt
+    let key = GenericArray::from_slice(&aes_key[..]);
+    let cipher = Aes256Gcm::new(key);
+    let nonce_bytes = nonce.to_be_bytes();
+    let aes_nonce = Nonce::from_slice(&nonce_bytes[4..]);
+    let plaintext = match cipher.decrypt(aes_nonce, encrypted_bytes.as_ref()) {
+        Ok(p) => p,
+        Err(e) => return Err(format!("Failed to decrypt config with cipher. {}", e).into()),
+    };
+    let config_str = std::str::from_utf8(&plaintext)?;
+
+    Ok((config_str.to_string(), nonce))
 }
 
 // TODO move into config?
@@ -808,6 +1038,21 @@ pub fn process_shared_file(
             shared_file.set_file_size_string();
             shared_file.files.push(new_shared_file);
         }
+    }
+
+    Ok(())
+}
+
+pub fn is_new_password_valid(
+    password: &String,
+    retype_password: &String,
+) -> Result<(), Box<dyn Error>> {
+    if password.is_empty() {
+        Err("Password cannot be empty")?
+    }
+
+    if password != retype_password {
+        Err("Passwords must match")?
     }
 
     Ok(())
