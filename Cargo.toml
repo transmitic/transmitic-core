@@ -1,6 +1,6 @@
 [package]
 name = "transmitic_core"
-version = "0.10.7"
+version = "0.11.0"
 authors = ["Andrew Shay <andrew.shay@andrewshay.me>"]
 edition = "2018"
 
@@ -11,13 +11,13 @@ path = "src/lib.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = { version = "1.0.145", features = ["derive", "rc"] }
-serde_json = "1.0.85"
+serde = { version = "1.0.152", features = ["derive", "rc"] }
+serde_json = "1.0.91"
 rand = "0.8.5"
 rand_core = "0.5.1"
 aes-gcm = { version = "0.10.1", features = ["heapless"]}
 ring = "0.16.20"
-base64 = "0.13.0"
+base64 = "0.21.0"
 
 [dependencies.x25519-dalek]
 version = "1.2.0"

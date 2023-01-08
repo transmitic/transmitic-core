@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose, Engine};
 use ring::{
     rand,
     signature::{self, KeyPair},
@@ -28,10 +29,10 @@ pub fn generate_id_pair() -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
 }
 
 pub fn get_bytes_from_base64_str(string: &str) -> Result<Vec<u8>, Box<dyn Error>> {
-    let decoded = base64::decode(string)?;
+    let decoded = general_purpose::STANDARD.decode(string)?;
     Ok(decoded)
 }
 
 pub fn get_base64_str_from_bytes(bytes: Vec<u8>) -> String {
-    base64::encode(bytes)
+    general_purpose::STANDARD.encode(bytes)
 }
