@@ -5,6 +5,9 @@ use ring::{
 use std::{error::Error, vec::Vec};
 extern crate base64;
 
+pub const NONCE_MAX: u128 = 79_228_162_514_264_337_593_543_950_335;
+pub const NONCE_INIT: u128 = 0;
+
 // was ring::error::Unspecified
 pub fn generate_id_pair() -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
     // Generate a key pair in PKCS#8 (v2) format.

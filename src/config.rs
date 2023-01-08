@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::app_aggregator::AppAggMessage;
 use crate::crypto;
+use crate::crypto::NONCE_INIT;
+use crate::crypto::NONCE_MAX;
 use crate::shared_file::SharedFile;
 
 // Third party
@@ -36,8 +38,6 @@ pub type Credential = [u8; CREDENTIAL_LEN];
 // Transmitic
 const CONFIG_VERSION: u16 = 0;
 const PBKDF2_ITERATIONS: u32 = 310_000;
-const NONCE_MAX: u128 = 79_228_162_514_264_337_593_543_950_335;
-const NONCE_INIT: u128 = 0;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConfigSharedFile {

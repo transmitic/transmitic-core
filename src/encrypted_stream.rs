@@ -10,6 +10,7 @@ use aes_gcm::{Aes256Gcm, KeyInit};
 use crate::core_consts::{
     MSG_TYPE_SIZE, PAYLOAD_OFFSET, PAYLOAD_SIZE_LEN, TOTAL_BUFFER_SIZE, TOTAL_CRYPTO_BUFFER_SIZE,
 };
+use crate::crypto::{NONCE_MAX, NONCE_INIT};
 
 // TODO Read and write only payload size, not entire buffer
 //  and encrypt only needed
@@ -18,7 +19,7 @@ use crate::core_consts::{
 pub struct EncryptedStream {
     stream: TcpStream,
     cipher: Aes256Gcm,
-    nonce: [u8; 12],
+    nonce: u128,
     crypto_buffer: Vec<u8>,
     pub buffer: Vec<u8>,
 }
@@ -28,7 +29,7 @@ impl EncryptedStream {
         let key = GenericArray::from_slice(&encryption_key[..]);
         // Create AES and stream
         let cipher = Aes256Gcm::new(key);
-        let nonce = [0; 12];
+        let nonce: u128 = NONCE_INIT;
         let crypto_buffer: Vec<u8> = vec![0; TOTAL_CRYPTO_BUFFER_SIZE];
         let buffer: Vec<u8> = vec![0; TOTAL_BUFFER_SIZE];
 
@@ -42,31 +43,23 @@ impl EncryptedStream {
     }
 
     fn increment_nonce(&mut self) -> Result<(), Box<dyn Error>> {
-        let mut flip: bool;
-        for i in 0..self.nonce.len() {
-            let byte = self.nonce[i];
-            if byte == 255 {
-                if i == self.nonce.len() - 1 {
-                    return Err("Nonce maxed. Reconnect.".into());
-                }
-                self.nonce[i] = 0;
-                flip = true;
-            } else {
-                self.nonce[i] += 1;
-                flip = false;
-            }
-
-            if !flip {
-                break;
-            }
+        if self.nonce >= NONCE_MAX {
+            return Err("Nonce maxed. Reconnect.".into());
         }
-
+        self.nonce += 1;
         Ok(())
+    }
+
+    fn get_nonce_bytes(&self) -> Result<[u8; 12], Box<dyn Error>> {
+        let nonce_bytes = self.nonce.to_be_bytes();
+        let nonce_sub: [u8; 12] = nonce_bytes[4..].try_into()?;
+        Ok(nonce_sub)
     }
 
     pub fn read(&mut self) -> Result<(), Box<dyn Error>> {
         self._read_stream()?;
-        let new_nonce = GenericArray::from_slice(&self.nonce[..]);
+        let nonce_bytes = self.get_nonce_bytes()?;
+        let new_nonce = GenericArray::from_slice(&nonce_bytes);
 
         let plaintext = match self.cipher.decrypt(new_nonce, self.crypto_buffer.as_ref()) {
             Ok(plaintext) => plaintext,
@@ -84,7 +77,8 @@ impl EncryptedStream {
 
     pub fn write(&mut self, msg: u16, payload: &[u8]) -> Result<(), Box<dyn Error>> {
         self.set_buffer(msg, payload);
-        let new_nonce = GenericArray::from_slice(&self.nonce[..]);
+        let nonce_bytes = self.get_nonce_bytes()?;
+        let new_nonce = GenericArray::from_slice(&nonce_bytes);
 
         let cipher_text = match self.cipher.encrypt(new_nonce, self.buffer.as_ref()) {
             Ok(cipher_text) => cipher_text,
