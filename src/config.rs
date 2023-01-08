@@ -484,7 +484,7 @@ fn create_new_config(
         my_private_id: private_id_string,
         shared_users: Vec::new(),
         shared_files: Vec::new(),
-        sharing_port: "7878".to_string(),
+        sharing_port: "45454".to_string(),
     };
 
     write_config(
