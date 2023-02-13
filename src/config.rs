@@ -39,7 +39,7 @@ pub type Credential = [u8; CREDENTIAL_LEN];
 
 // Transmitic
 const CONFIG_VERSION: u16 = 0;
-const PBKDF2_ITERATIONS: u32 = 310_000;
+const PBKDF2_ITERATIONS: u32 = 600_000;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConfigSharedFile {
