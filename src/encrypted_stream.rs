@@ -2,15 +2,17 @@ use std::convert::TryInto;
 use std::error::Error;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::{thread, time};
 
 use aes_gcm::aead::generic_array::GenericArray;
 use aes_gcm::aead::AeadMut;
 use aes_gcm::{Aes256Gcm, KeyInit};
 
 use crate::core_consts::{
-    MSG_TYPE_SIZE, PAYLOAD_OFFSET, PAYLOAD_SIZE_LEN, TOTAL_BUFFER_SIZE, TOTAL_CRYPTO_BUFFER_SIZE,
+    CRC_MESSAGES, CRC_SIZE, MSG_TYPE_SIZE, PAYLOAD_OFFSET, PAYLOAD_SIZE_LEN, TOTAL_BUFFER_SIZE,
+    TOTAL_CRYPTO_BUFFER_SIZE,
 };
-use crate::crypto::{NONCE_MAX, NONCE_INIT};
+use crate::crypto::{NONCE_INIT, NONCE_MAX};
 
 // TODO Read and write only payload size, not entire buffer
 //  and encrypt only needed
@@ -105,7 +107,26 @@ impl EncryptedStream {
             self.buffer[MSG_TYPE_SIZE..PAYLOAD_SIZE_LEN + MSG_TYPE_SIZE].try_into()?,
         );
         let payload_size = payload_size_bytes as usize;
-        Ok(&self.buffer[PAYLOAD_OFFSET..PAYLOAD_OFFSET + payload_size])
+        let payload = &self.buffer[PAYLOAD_OFFSET..PAYLOAD_OFFSET + payload_size];
+
+        // CRC
+        let message = self.get_message()?;
+        if self.is_crc_payload(message) {
+            let expected_checksum_bytes = &self.buffer
+                [PAYLOAD_OFFSET + payload_size..PAYLOAD_OFFSET + payload_size + CRC_SIZE];
+            let expected_checksum = u32::from_be_bytes(expected_checksum_bytes[..].try_into()?);
+            let actual_checksum = crc32fast::hash(payload);
+
+            if expected_checksum != actual_checksum {
+                thread::sleep(time::Duration::from_secs(30));
+                Err(format!(
+                    "Checksum mismatch. Actual: '{:?}' - Expected '{:?}'",
+                    actual_checksum, expected_checksum
+                ))?;
+            }
+        }
+
+        Ok(payload)
     }
 
     fn set_buffer(&mut self, message: u16, payload: &[u8]) {
@@ -124,5 +145,18 @@ impl EncryptedStream {
 
         // Set payload
         self.buffer[PAYLOAD_OFFSET..PAYLOAD_OFFSET + payload_size].copy_from_slice(payload);
+
+        // CRC
+        if self.is_crc_payload(message) {
+            let checksum = crc32fast::hash(payload);
+            let checksum_bytes = checksum.to_be_bytes();
+            println!("{:?}", checksum);
+            self.buffer[PAYLOAD_OFFSET + payload_size..PAYLOAD_OFFSET + payload_size + CRC_SIZE]
+                .copy_from_slice(&checksum_bytes);
+        }
+    }
+
+    fn is_crc_payload(&self, message: u16) -> bool {
+        CRC_MESSAGES.contains(&message)
     }
 }
