@@ -2,6 +2,7 @@ use std::{
     error::Error,
     io::{Read, Write},
     net::TcpStream,
+    thread, time,
 };
 
 use rand_core::OsRng;
@@ -9,11 +10,12 @@ use ring::signature;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::{
+    app_aggregator::ExitCodes,
     config::SharedUser,
-    core_consts::{TRAN_API_MAJOR, TRAN_API_MINOR, TRAN_MAGIC_NUMBER},
+    core_consts::{DENIED_SLEEP, TRAN_API_MAJOR, TRAN_API_MINOR, TRAN_MAGIC_NUMBER},
     crypto,
     encrypted_stream::EncryptedStream,
-    outgoing_downloader::ERR_REMOTE_ID_MISMATCH,
+    outgoing_downloader::ERR_REMOTE_ID_NOT_FOUND,
 };
 
 const BUFFER_SIZE: usize = 32 + 64;
@@ -21,14 +23,18 @@ const BUFFER_SIZE: usize = 32 + 64;
 // TODO drop struct and just use functions instead?
 pub struct TransmiticStream {
     stream: TcpStream,
-    shared_user: SharedUser,
+    connecting_ip: String,
+    shared_users: Vec<SharedUser>,
     private_key_pair: signature::Ed25519KeyPair,
+    private_id_bytes: Vec<u8>,
+    matched_shared_user: Option<SharedUser>,
 }
 
 impl TransmiticStream {
     pub fn new(
         stream: TcpStream,
-        shared_user: SharedUser,
+        connecting_ip: String,
+        shared_users: Vec<SharedUser>,
         private_id_bytes: Vec<u8>,
     ) -> TransmiticStream {
         // TODO function
@@ -39,8 +45,11 @@ impl TransmiticStream {
 
         TransmiticStream {
             stream,
-            shared_user,
+            connecting_ip,
+            shared_users,
             private_key_pair,
+            private_id_bytes,
+            matched_shared_user: None,
         }
     }
 
@@ -70,7 +79,20 @@ impl TransmiticStream {
     ) -> Result<EncryptedStream, Box<dyn Error>> {
         // TODO can i shutdown the original stream?
         let cloned_stream = self.stream.try_clone()?;
-        let encrypted_stream = EncryptedStream::new(cloned_stream, encryption_key);
+
+        let shared_user = match &self.matched_shared_user {
+            Some(shared_user) => shared_user.to_owned(),
+            None => {
+                eprintln!("SharedUser not matched for encryption stream");
+                std::process::exit(ExitCodes::EncStreamNoUser as i32);
+            }
+        };
+        let encrypted_stream = EncryptedStream::new(
+            cloned_stream,
+            encryption_key,
+            shared_user,
+            self.private_id_bytes.clone(),
+        );
         Ok(encrypted_stream)
     }
 
@@ -91,7 +113,7 @@ impl TransmiticStream {
         if buffer[0..4] != TRAN_MAGIC_NUMBER {
             return Err(format!(
                 "{} TRAN MAGIC NUMBER mismatch. {:?}",
-                self.shared_user.nickname,
+                self.connecting_ip,
                 &buffer[0..4]
             )
             .into());
@@ -100,7 +122,7 @@ impl TransmiticStream {
         if buffer[4] != TRAN_API_MAJOR {
             return Err(format!(
                 "{} TRAN API MAJOR mismatch. {}",
-                self.shared_user.nickname, &buffer[4]
+                self.connecting_ip, &buffer[4]
             )
             .into());
         }
@@ -137,21 +159,31 @@ impl TransmiticStream {
         let mut remote_diffie_signed_public_bytes: [u8; 64] = [0; 64];
         remote_diffie_signed_public_bytes[..].copy_from_slice(&buffer[32..BUFFER_SIZE]);
 
-        // Load PublicID from shared_user
-        let remote_public_id_bytes =
-            crypto::get_bytes_from_base64_str(&self.shared_user.public_id)?;
-        let remote_public_key =
-            signature::UnparsedPublicKey::new(&signature::ED25519, remote_public_id_bytes);
+        // Try every shared user
+        for shared_user in &self.shared_users {
+            // Load PublicID from shared_user
+            let remote_public_id_bytes = crypto::get_bytes_from_base64_str(&shared_user.public_id)?;
+            let remote_public_key =
+                signature::UnparsedPublicKey::new(&signature::ED25519, remote_public_id_bytes);
 
-        // Verify diffie bytes were signed with the PublicID we have for this user
-        match remote_public_key.verify(
-            &remote_diffie_public_bytes,
-            &remote_diffie_signed_public_bytes,
-        ) {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(format!("{} {}", ERR_REMOTE_ID_MISMATCH, e).into());
+            // Verify diffie bytes were signed with the PublicID we have for this user
+            if remote_public_key
+                .verify(
+                    &remote_diffie_public_bytes,
+                    &remote_diffie_signed_public_bytes,
+                )
+                .is_ok()
+            {
+                // Found SharedUser
+                self.matched_shared_user = Some(shared_user.to_owned());
+                break;
             }
+        }
+
+        // No SharedUser could be found. This is an unknown user.
+        if self.matched_shared_user.is_none() {
+            thread::sleep(time::Duration::from_secs(DENIED_SLEEP));
+            return Err(ERR_REMOTE_ID_NOT_FOUND.to_string().into());
         }
 
         // Create the diffie public key now that it's been verified

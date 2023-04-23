@@ -64,6 +64,14 @@ struct ConfigFile {
     shared_users: Vec<SharedUser>,
     shared_files: Vec<ConfigSharedFile>,
     sharing_port: String,
+    #[serde(default = "default_false")]
+    ignore_incoming: bool,
+    #[serde(default = "default_false")]
+    reverse_connection: bool,
+}
+
+fn default_false() -> bool {
+    false
 }
 
 #[derive(Clone)]
@@ -113,6 +121,14 @@ impl Config {
             iterations,
             config_version,
         })
+    }
+
+    pub fn is_ignore_incoming(&self) -> bool {
+        self.config_file.ignore_incoming
+    }
+
+    pub fn is_reverse_connection(&self) -> bool {
+        self.config_file.reverse_connection
     }
 
     pub fn is_config_encrypted(&self) -> bool {
@@ -366,6 +382,22 @@ impl Config {
         Ok(())
     }
 
+    pub fn set_ignore_incoming(&mut self, state: bool) -> Result<(), Box<dyn Error>> {
+        let mut new_config_file = self.config_file.clone();
+        new_config_file.ignore_incoming = state;
+        self.write_and_set_config(&mut new_config_file)?;
+
+        Ok(())
+    }
+
+    pub fn set_reverse_connection(&mut self, state: bool) -> Result<(), Box<dyn Error>> {
+        let mut new_config_file = self.config_file.clone();
+        new_config_file.reverse_connection = state;
+        self.write_and_set_config(&mut new_config_file)?;
+
+        Ok(())
+    }
+
     pub fn set_user_is_allowed_state(
         &mut self,
         nickname: String,
@@ -487,6 +519,8 @@ fn create_new_config(
         shared_users: Vec::new(),
         shared_files: Vec::new(),
         sharing_port: "45454".to_string(),
+        ignore_incoming: false,
+        reverse_connection: false,
     };
 
     write_config(
@@ -582,6 +616,7 @@ fn verify_config(config_file: &mut ConfigFile) -> Result<(), Box<dyn Error>> {
     verify_config_my_private_id(&config_file.my_private_id)?;
     verify_config_shared_users(&config_file.shared_users)?;
     verify_config_shared_files(&config_file.shared_users, &config_file.shared_files)?;
+    verify_ignore_and_reverse(config_file.ignore_incoming, config_file.reverse_connection)?;
 
     Ok(())
 }
@@ -875,6 +910,16 @@ fn verify_config_shared_files(
         }
     }
 
+    Ok(())
+}
+
+fn verify_ignore_and_reverse(
+    ignore_incoming: bool,
+    reverse_connection: bool,
+) -> Result<(), Box<dyn Error>> {
+    if ignore_incoming && reverse_connection {
+        return Err("Ignore Incoming and Reverse Connection cannot both be On.".into());
+    }
     Ok(())
 }
 

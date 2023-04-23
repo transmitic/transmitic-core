@@ -18,6 +18,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::Instant,
 };
 use std::{fmt::Write as _, path};
@@ -34,16 +35,19 @@ use crate::{
 
 const ERR_REC_DISCONNECTED: &str = "Uploader receiver disconnected";
 pub const ERR_REMOTE_ID_MISMATCH: &str = "PublicID for user is rejected.";
+pub const ERR_REMOTE_ID_NOT_FOUND: &str = "Could not find matching PublicID. User unknown.";
 
 struct InternalRefreshData {
-    pub data: Result<SharedFile, String>,
+    pub error: Option<String>,
+    pub data: Option<SharedFile>,
     pub recv: Option<Receiver<RefreshSharedMessages>>,
 }
 
 impl InternalRefreshData {
     fn new() -> InternalRefreshData {
         InternalRefreshData {
-            data: Err("Refresh".to_string()),
+            error: Some("Refresh".to_string()),
+            data: None,
             recv: None,
         }
     }
@@ -55,10 +59,16 @@ pub enum RefreshSharedMessages {
 
 pub struct OutgoingDownloader {
     config: Config,
-    channel_map: HashMap<String, Sender<MessageSingleDownloader>>,
+    channel_map: HashMap<
+        String,
+        (
+            Sender<MessageSingleDownloader>,
+            Sender<MessageRevSingleDownloader>,
+        ),
+    >,
     app_sender: Sender<AppAggMessage>,
     is_downloading_paused: bool,
-    refresh_data: HashMap<String, InternalRefreshData>,
+    refresh_data: Arc<Mutex<HashMap<String, InternalRefreshData>>>,
 }
 
 fn set_refresh_data(config: &Config, refresh_data: &mut HashMap<String, InternalRefreshData>) {
@@ -86,8 +96,10 @@ impl OutgoingDownloader {
     ) -> Result<OutgoingDownloader, Box<dyn Error>> {
         create_downloads_dir()?;
         let channel_map = HashMap::with_capacity(10);
-        let mut refresh_data = HashMap::with_capacity(10);
-        set_refresh_data(&config, &mut refresh_data);
+        let mut refresh_data_map = HashMap::with_capacity(10);
+        set_refresh_data(&config, &mut refresh_data_map);
+
+        let refresh_data = Arc::new(Mutex::new(refresh_data_map));
 
         Ok(OutgoingDownloader {
             config,
@@ -104,17 +116,22 @@ impl OutgoingDownloader {
 
     pub fn start_downloading(&mut self) {
         for user in self.config.get_shared_users() {
-            self.start_downloading_single_user(user);
+            self.start_downloading_single_user(user, None);
         }
     }
 
-    fn start_downloading_single_user(&mut self, user: SharedUser) {
+    pub fn start_downloading_single_user(
+        &mut self,
+        user: SharedUser,
+        mut reverse_connection: Option<EncryptedStream>,
+    ) {
         // TODO func
         let mut path_queue_file: PathBuf = self.config.get_path_dir_config();
         path_queue_file.push(format!("{}.txt", user.nickname));
 
         // Don't start download thread if there is nothing to download
-        if !path_queue_file.exists() {
+        // Unless rev conn, because we need to init the available files
+        if reverse_connection.is_none() && !path_queue_file.exists() {
             return;
         }
 
@@ -122,22 +139,69 @@ impl OutgoingDownloader {
         let app_sender_clone = self.app_sender.clone();
         let is_downloading_paused = self.is_downloading_paused;
 
+        // Reverse Connection was matched, but we check again due to race of new config
+        if let Some(enc) = &reverse_connection {
+            let mut user_matches = false;
+            for shared_user in self.config.get_shared_users() {
+                if shared_user.nickname == enc.shared_user.nickname
+                    && shared_user.public_id == enc.shared_user.public_id
+                    && private_id_bytes == enc.private_id_bytes
+                {
+                    user_matches = true;
+                }
+            }
+            if user_matches {
+                self.app_sender
+                    .send(AppAggMessage::LogDebug(format!(
+                        "Reverse Connection recheck success {}",
+                        enc.shared_user.nickname
+                    )))
+                    .ok();
+            } else {
+                self.app_sender
+                    .send(AppAggMessage::LogWarning(format!(
+                        "Reverse Connection recheck failed. Connection disconnected. {}",
+                        enc.shared_user.nickname
+                    )))
+                    .ok();
+                return;
+            }
+        }
+
+        // There is already an active thread. Send it the reverse connection and return.
+        if let Some((_, rev_sx)) = self.channel_map.get(&user.nickname) {
+            if let Some(enc) = reverse_connection.take() {
+                rev_sx
+                    .send(MessageRevSingleDownloader::NewConnection(enc))
+                    .ok();
+                return;
+            }
+        }
+
         let (sx, rx): (
             Sender<MessageSingleDownloader>,
             Receiver<MessageSingleDownloader>,
         ) = mpsc::channel();
-        self.channel_map.insert(user.nickname.clone(), sx);
+        let (rev_sx, rev_rx): (
+            Sender<MessageRevSingleDownloader>,
+            Receiver<MessageRevSingleDownloader>,
+        ) = mpsc::channel();
+        self.channel_map.insert(user.nickname.clone(), (sx, rev_sx));
+        let refresh_data_clone = self.refresh_data.clone();
 
         thread::spawn(move || {
             let thread_app_sender = app_sender_clone.clone();
             let nickname = user.nickname.clone();
             let mut downloader = SingleDownloader::new(
                 rx,
+                rev_rx,
                 private_id_bytes,
                 user.clone(),
                 path_queue_file,
                 app_sender_clone,
                 is_downloading_paused,
+                reverse_connection,
+                refresh_data_clone,
             );
 
             let mut continue_run = true;
@@ -195,7 +259,9 @@ impl OutgoingDownloader {
 
     pub fn set_new_config(&mut self, config: Config) {
         self.config = config;
-        set_refresh_data(&self.config, &mut self.refresh_data);
+
+        let mut refresh_guard = self.refresh_data.lock().unwrap();
+        set_refresh_data(&self.config, &mut refresh_guard);
     }
 
     pub fn set_new_private_id(&mut self, private_id_bytes: Vec<u8>) {
@@ -205,7 +271,7 @@ impl OutgoingDownloader {
     fn send_message_to_all_downloads(&mut self, message: MessageSingleDownloader) {
         let mut remove_keys: Vec<String> = Vec::new();
 
-        for (key, sender) in self.channel_map.iter_mut() {
+        for (key, (sender, _)) in self.channel_map.iter_mut() {
             match sender.send(message.clone()) {
                 Ok(_) => {}
                 Err(_) => remove_keys.push(key.to_string()),
@@ -217,6 +283,10 @@ impl OutgoingDownloader {
         }
     }
 
+    pub fn restart_connections(&mut self) {
+        self.send_message_to_all_downloads(MessageSingleDownloader::RestartConnection);
+    }
+
     pub fn downloads_cancel_all(&mut self) {
         self.send_message_to_all_downloads(MessageSingleDownloader::CancelAllDownloads);
     }
@@ -224,7 +294,7 @@ impl OutgoingDownloader {
     #[allow(clippy::single_match)]
     pub fn downloads_cancel_single(&mut self, nickname: String, file_path: String) {
         match self.channel_map.get_mut(&nickname) {
-            Some(channel) => {
+            Some((channel, _)) => {
                 match channel.send(MessageSingleDownloader::CancelDownload(file_path)) {
                     Ok(_) => {}
                     Err(_) => {
@@ -248,7 +318,7 @@ impl OutgoingDownloader {
         for shared_user in self.config.get_shared_users() {
             if shared_user.nickname == nickname {
                 match self.channel_map.get_mut(nickname) {
-                    Some(channel) => {
+                    Some((channel, _)) => {
                         match channel.send(MessageSingleDownloader::NewSharedUser(shared_user)) {
                             Ok(_) => {}
                             Err(_) => {
@@ -285,7 +355,7 @@ impl OutgoingDownloader {
     ) -> Result<(), Box<dyn Error>> {
         for download in downloads {
             match self.channel_map.get(&download.owner) {
-                Some(channel) => {
+                Some((channel, _)) => {
                     match channel.send(MessageSingleDownloader::NewDownload(download.path.clone()))
                     {
                         Ok(_) => {}
@@ -310,7 +380,7 @@ impl OutgoingDownloader {
 
     pub fn remove_user(&mut self, nickname: &str) {
         // User still exists, else it's already gone, doesn't matter
-        if let Some(channel) = self.channel_map.get(nickname) {
+        if let Some((channel, _)) = self.channel_map.get(nickname) {
             channel.send(MessageSingleDownloader::RemoveUser).ok(); // If it fails thread already died, doesn't matter
         }
 
@@ -337,7 +407,7 @@ impl OutgoingDownloader {
 
         for user in self.config.get_shared_users() {
             if user.nickname == download_owner {
-                self.start_downloading_single_user(user);
+                self.start_downloading_single_user(user, None);
                 break;
             }
         }
@@ -354,7 +424,9 @@ impl OutgoingDownloader {
     pub fn start_refresh_shared_with_me_single_user(&mut self, nickname: String) {
         let (sx, rx) = mpsc::channel();
 
-        match self.refresh_data.get_mut(&nickname) {
+        let mut refresh_guard = self.refresh_data.lock().unwrap();
+
+        match refresh_guard.get_mut(&nickname) {
             Some(data) => {
                 data.recv = Some(rx);
             }
@@ -382,17 +454,20 @@ impl OutgoingDownloader {
     }
 
     pub fn get_shared_with_me_data(&mut self) -> HashMap<String, RefreshData> {
-        for (_, data) in self.refresh_data.iter_mut() {
+        let mut refresh_guard = self.refresh_data.lock().unwrap();
+
+        for (_, data) in refresh_guard.iter_mut() {
             match &data.recv {
                 Some(recv) => match recv.try_recv() {
                     Ok(msg) => match msg {
                         RefreshSharedMessages::FileData(d) => match d {
                             Ok(shared_file) => {
-                                data.data = Ok(shared_file);
+                                data.error = None;
+                                data.data = Some(shared_file);
                                 data.recv = None;
                             }
                             Err(e) => {
-                                data.data = Err(e);
+                                data.error = Some(e);
                                 data.recv = None;
                             }
                         },
@@ -400,8 +475,8 @@ impl OutgoingDownloader {
                     Err(e) => match e {
                         mpsc::TryRecvError::Empty => {}
                         mpsc::TryRecvError::Disconnected => {
-                            data.data =
-                                Err("Transmitic Error: Channel disconnected before refresh data was received."
+                            data.error =
+                                Some("Transmitic Error: Channel disconnected before refresh data was received."
                                     .to_string());
                             data.recv = None;
                         }
@@ -412,13 +487,14 @@ impl OutgoingDownloader {
         }
 
         let mut refresh_data = HashMap::new();
-        for (nickname, data) in self.refresh_data.iter() {
+        for (nickname, data) in refresh_guard.iter() {
             let in_progress = matches!(data.recv, Some(_));
 
             refresh_data.insert(
                 nickname.clone(),
                 RefreshData {
                     owner: nickname.clone(),
+                    error: data.error.clone(),
                     data: data.data.clone(),
                     in_progress,
                 },
@@ -448,7 +524,8 @@ fn refresh_single_user(
 
     let mut transmitic_stream = TransmiticStream::new(
         stream,
-        shared_user.clone(),
+        remote_address,
+        vec![shared_user.clone()],
         config.get_local_private_id_bytes(),
     );
     let mut encrypted_stream = transmitic_stream.connect()?;
@@ -489,7 +566,7 @@ fn get_path_downloads_dir_user(user: &str) -> Result<PathBuf, std::io::Error> {
     Ok(path)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 enum MessageSingleDownloader {
     NewSharedUser(SharedUser),
     NewPrivateId(Vec<u8>),
@@ -499,10 +576,16 @@ enum MessageSingleDownloader {
     PauseDownloads,
     ResumeDownloads,
     RemoveUser,
+    RestartConnection,
+}
+
+enum MessageRevSingleDownloader {
+    NewConnection(EncryptedStream),
 }
 
 struct SingleDownloader {
     receiver: Receiver<MessageSingleDownloader>,
+    rev_receiver: Receiver<MessageRevSingleDownloader>,
     private_id_bytes: Vec<u8>,
     shared_user: SharedUser,
     path_queue_file: PathBuf,
@@ -517,22 +600,29 @@ struct SingleDownloader {
     active_download_total_size: String,
     shutdown: bool,
     progress_current_time: Instant,
+    reverse_connection: Option<EncryptedStream>,
+    refresh_data: Arc<Mutex<HashMap<String, InternalRefreshData>>>,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl SingleDownloader {
     pub fn new(
         receiver: Receiver<MessageSingleDownloader>,
+        rev_receiver: Receiver<MessageRevSingleDownloader>,
         private_id_bytes: Vec<u8>,
         shared_user: SharedUser,
         path_queue_file: PathBuf,
         app_sender: Sender<AppAggMessage>,
         is_downloading_paused: bool,
+        reverse_connection: Option<EncryptedStream>,
+        refresh_data: Arc<Mutex<HashMap<String, InternalRefreshData>>>,
     ) -> SingleDownloader {
         let download_queue = VecDeque::new();
         let progress_current_time = Instant::now();
 
         SingleDownloader {
             receiver,
+            rev_receiver,
             private_id_bytes,
             shared_user,
             path_queue_file,
@@ -547,6 +637,8 @@ impl SingleDownloader {
             active_download_total_size: "".to_string(),
             shutdown: false,
             progress_current_time,
+            reverse_connection,
+            refresh_data,
         }
     }
 
@@ -580,6 +672,7 @@ impl SingleDownloader {
         root_download_dir.push(path::MAIN_SEPARATOR);
 
         // TODO the inner loop logic in a function that will loop and handle errors to prevent the outer thread loop from restarting the above code?
+        // TODO add a Stream shutdown at end of loop?
         loop {
             self.read_receiver()?;
 
@@ -595,7 +688,7 @@ impl SingleDownloader {
                 continue;
             }
 
-            if self.download_queue.is_empty() {
+            if self.download_queue.is_empty() && self.reverse_connection.is_none() {
                 thread::sleep(time::Duration::from_millis(500));
                 continue;
             }
@@ -604,37 +697,43 @@ impl SingleDownloader {
 
             // ------ DOWNLOAD FROM QUEUE
 
-            // TODO duped with refresh_shared_with_me
-            // CREATE CONNECTION
-            let mut remote_address = self.shared_user.ip.clone();
+            let mut encrypted_stream = match self.reverse_connection.take() {
+                Some(enc) => enc,
+                None => {
+                    // TODO duped with refresh_shared_with_me
+                    // CREATE CONNECTION
+                    let mut remote_address = self.shared_user.ip.clone();
 
-            write!(remote_address, ":{}", self.shared_user.port.clone()).unwrap();
-            self.app_sender.send(AppAggMessage::LogInfo(format!(
-                "Attempt outgoing download {} {}",
-                self.shared_user.nickname, remote_address
-            )))?;
+                    write!(remote_address, ":{}", self.shared_user.port.clone()).unwrap();
+                    self.app_sender.send(AppAggMessage::LogInfo(format!(
+                        "Attempt outgoing download {} {}",
+                        self.shared_user.nickname, remote_address
+                    )))?;
 
-            let remote_socket_address: SocketAddr = remote_address.parse()?;
+                    let remote_socket_address: SocketAddr = remote_address.parse()?;
 
-            let stream = match TcpStream::connect_timeout(
-                &remote_socket_address,
-                time::Duration::from_secs(2),
-            ) {
-                Ok(stream) => stream,
-                Err(_) => {
-                    self.app_update_offline()?;
-                    thread::sleep(time::Duration::from_secs(5));
-                    continue;
+                    let stream = match TcpStream::connect_timeout(
+                        &remote_socket_address,
+                        time::Duration::from_secs(2),
+                    ) {
+                        Ok(stream) => stream,
+                        Err(_) => {
+                            self.app_update_offline()?;
+                            thread::sleep(time::Duration::from_secs(5)); // TODO backoff?
+                            continue;
+                        }
+                    };
+
+                    // TODO duped with refresh_shared_with_me
+                    let mut transmitic_stream = TransmiticStream::new(
+                        stream,
+                        remote_address,
+                        vec![self.shared_user.clone()],
+                        self.private_id_bytes.clone(),
+                    );
+                    transmitic_stream.connect()?
                 }
             };
-
-            // TODO duped with refresh_shared_with_me
-            let mut transmitic_stream = TransmiticStream::new(
-                stream,
-                self.shared_user.clone(),
-                self.private_id_bytes.clone(),
-            );
-            let mut encrypted_stream = transmitic_stream.connect()?;
 
             // request file list
             encrypted_stream.write(MSG_FILE_LIST, &Vec::new())?;
@@ -657,10 +756,20 @@ impl SingleDownloader {
             remove_invalid_files(&mut everything_file);
             //print_shared_files(&everything_file, "");
 
+            let internal_refresh = InternalRefreshData {
+                error: None,
+                data: Some(everything_file.clone()),
+                recv: None,
+            };
+            let mut refresh_guard = self.refresh_data.lock().unwrap();
+            refresh_guard.insert(self.shared_user.nickname.clone(), internal_refresh);
+            drop(refresh_guard);
+
             loop {
                 let path_active_download = match self.download_queue.get(0) {
                     Some(path_active_download) => path_active_download.clone(),
                     None => {
+                        // TODO shutdown encrypted stream?
                         break;
                     }
                 };
@@ -669,6 +778,7 @@ impl SingleDownloader {
                 let shared_file = match get_file_by_path(&path_active_download, &everything_file) {
                     Some(file) => file,
                     None => {
+                        // Is invalid file
                         self.download_queue.pop_front();
                         self.write_queue()?;
                         self.active_download_path = None;
@@ -839,6 +949,19 @@ impl SingleDownloader {
 
     fn read_receiver(&mut self) -> Result<(), Box<dyn Error>> {
         loop {
+            match self.rev_receiver.try_recv() {
+                Ok(value) => match value {
+                    MessageRevSingleDownloader::NewConnection(enc) => {
+                        self.stop_downloading = true;
+                        self.reverse_connection = Some(enc);
+                    }
+                },
+                Err(e) => match e {
+                    mpsc::TryRecvError::Empty => {}
+                    mpsc::TryRecvError::Disconnected => return Err(ERR_REC_DISCONNECTED.into()),
+                },
+            }
+
             match self.receiver.try_recv() {
                 Ok(value) => match value {
                     MessageSingleDownloader::NewPrivateId(private_id_bytes) => {
@@ -925,6 +1048,14 @@ impl SingleDownloader {
                             self.shared_user.nickname.clone()
                         )))?;
                     }
+                    MessageSingleDownloader::RestartConnection => {
+                        self.stop_downloading = true;
+
+                        self.app_sender.send(AppAggMessage::LogDebug(format!(
+                            "Restart Downloader {}",
+                            self.shared_user.nickname.clone()
+                        )))?;
+                    }
                 },
                 Err(e) => match e {
                     mpsc::TryRecvError::Empty => return Ok(()),
@@ -1004,12 +1135,13 @@ impl SingleDownloader {
 
     fn initialize_download_queue(&mut self) -> Result<(), Box<dyn Error>> {
         self.download_queue.clear();
-        let contents = fs::read_to_string(&self.path_queue_file)?;
-
-        for mut line in contents.lines() {
-            line = line.trim();
-            if !line.is_empty() {
-                self.download_queue.push_back(line.to_string());
+        // Rev connection can init without a queue file
+        if let Ok(contents) = fs::read_to_string(&self.path_queue_file) {
+            for mut line in contents.lines() {
+                line = line.trim();
+                if !line.is_empty() {
+                    self.download_queue.push_back(line.to_string());
+                }
             }
         }
 

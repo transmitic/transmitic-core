@@ -8,6 +8,7 @@ use aes_gcm::aead::generic_array::GenericArray;
 use aes_gcm::aead::AeadMut;
 use aes_gcm::{Aes256Gcm, KeyInit};
 
+use crate::config::SharedUser;
 use crate::core_consts::{
     CRC_MESSAGES, CRC_SIZE, MSG_TYPE_SIZE, PAYLOAD_OFFSET, PAYLOAD_SIZE_LEN, TOTAL_BUFFER_SIZE,
     TOTAL_CRYPTO_BUFFER_SIZE,
@@ -24,10 +25,17 @@ pub struct EncryptedStream {
     nonce: u128,
     crypto_buffer: Vec<u8>,
     pub buffer: Vec<u8>,
+    pub shared_user: SharedUser,
+    pub private_id_bytes: Vec<u8>,
 }
 
 impl EncryptedStream {
-    pub fn new(stream: TcpStream, encryption_key: [u8; 32]) -> EncryptedStream {
+    pub fn new(
+        stream: TcpStream,
+        encryption_key: [u8; 32],
+        shared_user: SharedUser,
+        private_id_bytes: Vec<u8>,
+    ) -> EncryptedStream {
         let key = GenericArray::from_slice(&encryption_key[..]);
         // Create AES and stream
         let cipher = Aes256Gcm::new(key);
@@ -41,6 +49,8 @@ impl EncryptedStream {
             nonce,
             crypto_buffer,
             buffer,
+            shared_user,
+            private_id_bytes,
         }
     }
 
@@ -150,7 +160,6 @@ impl EncryptedStream {
         if self.is_crc_payload(message) {
             let checksum = crc32fast::hash(payload);
             let checksum_bytes = checksum.to_be_bytes();
-            println!("{:?}", checksum);
             self.buffer[PAYLOAD_OFFSET + payload_size..PAYLOAD_OFFSET + payload_size + CRC_SIZE]
                 .copy_from_slice(&checksum_bytes);
         }

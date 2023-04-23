@@ -1,11 +1,13 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex, RwLock};
 
 use std::thread;
 
+use crate::encrypted_stream::EncryptedStream;
 use crate::incoming_uploader::IncomingUploaderError;
 use crate::logger::{LogLevel, Logger};
+use crate::outgoing_downloader::OutgoingDownloader;
 use crate::transmitic_core::{SingleDownloadState, SingleUploadState};
 
 // TODO combine them all into 1 struct?
@@ -44,6 +46,8 @@ pub struct OfflineErrorMessage {
     pub error: String,
 }
 
+// TODO fix
+#[allow(clippy::large_enum_variant)]
 pub enum AppAggMessage {
     LogDebug(String),
     LogInfo(String),
@@ -62,16 +66,17 @@ pub enum AppAggMessage {
     UploadErrorGeneric(String),
     UploadErrorPortInUse,
     AppFailedKill(String),
+    ReverseConnection(EncryptedStream),
 }
 
 pub fn run_app_loop(
+    receiver: Receiver<AppAggMessage>,
     downlaod_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
     logger: Arc<Mutex<Logger>>,
     incoming_uploader_error: Arc<Mutex<Option<IncomingUploaderError>>>,
-) -> Sender<AppAggMessage> {
-    let (sender, receiver): (Sender<AppAggMessage>, Receiver<AppAggMessage>) = mpsc::channel();
-
+    outgoing_downloader: Arc<Mutex<OutgoingDownloader>>,
+) {
     thread::spawn(move || {
         app_loop(
             receiver,
@@ -79,16 +84,21 @@ pub fn run_app_loop(
             upload_state,
             logger,
             incoming_uploader_error,
+            outgoing_downloader,
         );
     });
-
-    sender
 }
 
 // TODO use attribute? i32
 pub enum ExitCodes {
     AppLoopRecFailed = 2,
     AppFailedKill = 3,
+    RevConnOutgoingLock = 4,
+    EncStreamNoUser = 5,
+    UploadManRunEnd = 6,
+    UploadManSendFailed = 7,
+    UploadManRecvDisconnected = 8,
+    InvalidStateIgnoreAndRev = 9,
 }
 
 #[allow(clippy::field_reassign_with_default)]
@@ -98,6 +108,7 @@ fn app_loop(
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
     logger: Arc<Mutex<Logger>>,
     incoming_uploader_error: Arc<Mutex<Option<IncomingUploaderError>>>,
+    outgoing_downloader: Arc<Mutex<OutgoingDownloader>>,
 ) {
     loop {
         let msg = match receiver.recv() {
@@ -278,6 +289,20 @@ fn app_loop(
                     .lock()
                     .unwrap_or_else(|err| err.into_inner());
                 *incoming_error_guard = Some(IncomingUploaderError::PortInUse);
+            }
+            AppAggMessage::ReverseConnection(encrypted_stream) => {
+                log_message(&logger, "Reverse AppAgg".to_string(), LogLevel::Info);
+
+                let shared_user = encrypted_stream.shared_user.clone();
+                match outgoing_downloader.lock() {
+                    Ok(mut guard) => {
+                        guard.start_downloading_single_user(shared_user, Some(encrypted_stream));
+                    }
+                    Err(e) => {
+                        eprintln!("Reverse Connection outgoing lock failed. {}", e);
+                        std::process::exit(ExitCodes::RevConnOutgoingLock as i32);
+                    }
+                }
             }
         }
     }

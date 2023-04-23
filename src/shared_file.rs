@@ -11,7 +11,8 @@ pub struct SelectedDownload {
 #[derive(Debug, Clone)]
 pub struct RefreshData {
     pub owner: String,
-    pub data: Result<SharedFile, String>,
+    pub error: Option<String>,
+    pub data: Option<SharedFile>,
     pub in_progress: bool,
 }
 
