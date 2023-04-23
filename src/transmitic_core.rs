@@ -358,6 +358,14 @@ impl TransmiticCore {
         self.sharing_state.clone()
     }
 
+    pub fn is_ignore_incoming(&self) -> bool {
+        self.config.is_ignore_incoming()
+    }
+
+    pub fn is_reverse_connection(&self) -> bool {
+        self.config.is_reverse_connection()
+    }
+
     pub fn get_log_path(&self) -> PathBuf {
         self.log_path.clone()
     }
@@ -474,6 +482,31 @@ impl TransmiticCore {
                 self.sharing_state
             )))
             .ok();
+    }
+
+    pub fn set_ignore_incoming(&mut self, state: bool) -> Result<(), Box<dyn Error>> {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!(
+                "Set ignore incoming '{}'",
+                &state
+            )))
+            .ok();
+        self.config.set_ignore_incoming(state)?;
+        self.incoming_uploader.set_new_config(self.config.clone());
+        Ok(())
+    }
+
+    pub fn set_reverse_connection(&mut self, state: bool) -> Result<(), Box<dyn Error>> {
+        self.app_sender
+            .send(AppAggMessage::LogInfo(format!(
+                "Set reverse connection '{}'",
+                &state
+            )))
+            .ok();
+        self.config.set_reverse_connection(state)?;
+        // TODO
+        self.incoming_uploader.set_new_config(self.config.clone());
+        Ok(())
     }
 
     pub fn set_user_is_allowed_state(
