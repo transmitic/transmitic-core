@@ -34,6 +34,7 @@ use crate::{
 
 const ERR_REC_DISCONNECTED: &str = "Uploader receiver disconnected";
 pub const ERR_REMOTE_ID_MISMATCH: &str = "PublicID for user is rejected.";
+pub const ERR_REMOTE_ID_NOT_FOUND: &str = "Could not find matching PublicID. User unknown.";
 
 struct InternalRefreshData {
     pub data: Result<SharedFile, String>,
@@ -448,7 +449,8 @@ fn refresh_single_user(
 
     let mut transmitic_stream = TransmiticStream::new(
         stream,
-        shared_user.clone(),
+        remote_address,
+        vec![shared_user.clone()],
         config.get_local_private_id_bytes(),
     );
     let mut encrypted_stream = transmitic_stream.connect()?;
@@ -631,7 +633,8 @@ impl SingleDownloader {
             // TODO duped with refresh_shared_with_me
             let mut transmitic_stream = TransmiticStream::new(
                 stream,
-                self.shared_user.clone(),
+                remote_address,
+                vec![self.shared_user.clone()],
                 self.private_id_bytes.clone(),
             );
             let mut encrypted_stream = transmitic_stream.connect()?;

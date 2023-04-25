@@ -31,6 +31,8 @@ pub enum SharingState {
     Internet,
 }
 
+// TODO fix this?
+#[allow(clippy::large_enum_variant)]
 enum MessageUploadManager {
     SharingStateMsg(SharingState),
     NewConfig(Config),
@@ -336,48 +338,63 @@ impl SingleUploader {
             client_connecting_ip
         )))?;
 
-        // Find valid SharedUser
-        let mut shared_user: Option<SharedUser> = None;
-        for user in self.config.get_shared_users() {
-            if user.ip == client_connecting_ip {
-                shared_user = Some(user);
-                break;
+        let mut shared_users = self.config.get_shared_users();
+        if !self.config.is_ignore_incoming() {
+            // Find valid SharedUser
+            let mut shared_user: Option<SharedUser> = None;
+            for user in shared_users.iter() {
+                if user.ip == client_connecting_ip {
+                    shared_user = Some(user.clone());
+                    break;
+                }
             }
-        }
 
-        let shared_user = match shared_user {
-            Some(shared_user) => shared_user,
-            None => {
-                self.app_sender.send(AppAggMessage::LogWarning(format!(
-                    "Unknown IP tried to connect: '{}'",
-                    client_connecting_ip
-                )))?;
-                thread::sleep(time::Duration::from_secs(30));
+            let shared_user = match shared_user {
+                Some(shared_user) => shared_user,
+                None => {
+                    self.app_sender.send(AppAggMessage::LogWarning(format!(
+                        "Unknown IP tried to connect. Denied.: '{}'",
+                        client_connecting_ip
+                    )))?;
+                    thread::sleep(time::Duration::from_secs(30));
+                    return Ok(());
+                }
+            };
+
+            self.nickname = shared_user.nickname.clone();
+            // Not allowed check below too
+            if !shared_user.allowed {
+                self.process_not_allowed()?;
                 return Ok(());
             }
-        };
 
-        self.nickname = shared_user.nickname.clone();
-
-        if !shared_user.allowed {
-            self.app_sender.send(AppAggMessage::LogWarning(format!(
-                "User tried to connect but is currently set to Block: '{}'",
+            self.app_sender.send(AppAggMessage::LogInfo(format!(
+                "User trying to connect: '{}'",
                 self.nickname
             )))?;
-            thread::sleep(time::Duration::from_secs(30));
-            return Ok(());
+
+            // Set as the only user for Transmitic stream and PublicID match
+            shared_users.clear();
+            shared_users.push(shared_user);
         }
 
-        self.app_sender.send(AppAggMessage::LogInfo(format!(
-            "User trying to connect: '{}'",
-            self.nickname
-        )))?;
+        // TODO duped with refresh_single_user and outgoing downloader
         let mut transmitic_stream = TransmiticStream::new(
             stream.try_clone()?,
-            shared_user.clone(),
+            client_connecting_ip,
+            shared_users,
             self.config.get_local_private_id_bytes(),
         );
         let mut encrypted_stream = transmitic_stream.wait_for_incoming()?;
+        let shared_user = encrypted_stream.shared_user.clone();
+        self.nickname = shared_user.nickname.clone();
+
+        // Not allowed check above too
+        if !shared_user.allowed {
+            self.process_not_allowed()?;
+            return Ok(());
+        }
+
         self.app_sender.send(AppAggMessage::LogInfo(format!(
             "User successfully connected: '{}'",
             self.nickname
@@ -400,6 +417,15 @@ impl SingleUploader {
             )?;
         }
 
+        Ok(())
+    }
+
+    fn process_not_allowed(&self) -> Result<(), Box<dyn Error>> {
+        self.app_sender.send(AppAggMessage::LogWarning(format!(
+            "User tried to connect but is currently set to Block: '{}'",
+            self.nickname
+        )))?;
+        thread::sleep(time::Duration::from_secs(30));
         Ok(())
     }
 

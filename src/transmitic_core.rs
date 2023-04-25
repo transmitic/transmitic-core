@@ -492,6 +492,7 @@ impl TransmiticCore {
             )))
             .ok();
         self.config.set_ignore_incoming(state)?;
+        // TODO
         self.incoming_uploader.set_new_config(self.config.clone());
         Ok(())
     }
