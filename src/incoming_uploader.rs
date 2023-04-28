@@ -1,8 +1,10 @@
 use core::time;
+use std::any::Any;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::panic::AssertUnwindSafe;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -14,7 +16,7 @@ use crate::config::{get_everything_file, Config, SharedUser};
 use crate::core_consts::{
     MAX_DATA_SIZE, MSG_CANNOT_SELECT_DIRECTORY, MSG_FILE_CHUNK, MSG_FILE_FINISHED,
     MSG_FILE_INVALID_FILE, MSG_FILE_LIST, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE,
-    MSG_FILE_SELECTION_CONTINUE,
+    MSG_FILE_SELECTION_CONTINUE, MSG_REVERSE,
 };
 use crate::encrypted_stream::EncryptedStream;
 use crate::shared_file::SharedFile;
@@ -126,6 +128,7 @@ struct UploaderManager {
     config: Config,
     sharing_state: SharingState,
     single_uploaders: Vec<Sender<MessageSingleUploader>>,
+    single_uploaders_rev: HashMap<String, Sender<MessageSingleUploader>>,
     app_sender: Sender<AppAggMessage>,
 }
 
@@ -137,6 +140,7 @@ impl UploaderManager {
         app_sender: Sender<AppAggMessage>,
     ) -> UploaderManager {
         let single_uploaders = Vec::with_capacity(10);
+        let single_uploaders_rev: HashMap<String, Sender<MessageSingleUploader>> = HashMap::new();
 
         UploaderManager {
             stop_incoming: false,
@@ -144,6 +148,7 @@ impl UploaderManager {
             config,
             sharing_state,
             single_uploaders,
+            single_uploaders_rev,
             app_sender,
         }
     }
@@ -173,28 +178,59 @@ impl UploaderManager {
                 ip_address
             )))?;
 
-            let listener = TcpListener::bind(ip_address)?;
-            listener.set_nonblocking(true)?;
+            // single_uploaders should save (ip:port, sx)
+            // If reverse connection:
+            //  if SharedUser not in single_uploaders:
+            //      start reverse connection
+            // ? Should reverse connection disable all incoming?
+            // what if rev starts a rev-incoming, and there's a true-incoming waiting
+            //  i can't distinguish/know/trust the true-incoming port though?
 
-            for stream in listener.incoming() {
-                self.read_receiver();
-                if self.stop_incoming {
-                    break;
-                }
-                match stream {
-                    Ok(stream) => {
+            // UserOne - 192.168.0.1:7878
+            // UserTwo - 192.168.0.1:8080
+            // Outgoing ^
+            // Cannot know incoming port, therefore my Rev could collide (or be unknownable) of an incoming
+            if self.config.is_reverse_connection() {
+                self.app_sender
+                    .send(AppAggMessage::LogInfo(format!("REVERSE STARTING")))?;
+                loop {
+                    self.read_receiver();
+                    if self.stop_incoming {
+                        break;
+                    }
+                    self.remove_dead_uploaders();
+
+                    for shared_user in self.config.get_shared_users() {
+                        let nickname = shared_user.nickname.clone();
+                        if self.single_uploaders_rev.contains_key(&nickname) {
+                            continue;
+                        }
+                        self.app_sender.send(AppAggMessage::LogInfo(format!(
+                            "REVERSE INSERT {}",
+                            &nickname
+                        )))?;
                         let (sx, rx): (
                             Sender<MessageSingleUploader>,
                             Receiver<MessageSingleUploader>,
                         ) = mpsc::channel();
 
-                        self.remove_dead_uploaders();
-                        self.single_uploaders.push(sx);
+                        //self.remove_dead_uploaders();
+                        self.single_uploaders_rev.insert(nickname, sx);
 
                         let single_config = self.config.clone();
                         let app_sender_clone = self.app_sender.clone();
                         thread::spawn(move || {
                             let thread_app_sender = app_sender_clone.clone();
+
+                            let remote_address = format!("{}:{}", shared_user.ip, shared_user.port);
+                            let remote_socket_address: SocketAddr = remote_address.parse().unwrap(); // TODO unwrap
+
+                            let stream = TcpStream::connect_timeout(
+                                &remote_socket_address,
+                                time::Duration::from_secs(2),
+                            )
+                            .unwrap(); // TODO unwrap
+
                             let ip = match stream.peer_addr() {
                                 Ok(addr) => addr.to_string(),
                                 Err(_) => "Unknown IP".to_string(),
@@ -202,7 +238,7 @@ impl UploaderManager {
                             let result = panic::catch_unwind(AssertUnwindSafe(|| {
                                 let mut single_uploader =
                                     SingleUploader::new(rx, single_config, app_sender_clone);
-                                match single_uploader.run(&stream) {
+                                match single_uploader.run(&stream, Some(shared_user)) {
                                     Ok(_) => {}
                                     Err(e) => {
                                         thread_app_sender
@@ -237,20 +273,102 @@ impl UploaderManager {
                                         .unwrap();
                                 }
                             }
-                        });
+                        }); // end thread
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    loop {
                         thread::sleep(time::Duration::from_secs(1));
-                        continue;
                     }
-                    Err(e) => {
-                        self.app_sender.send(AppAggMessage::LogDebug(format!(
-                            "Failed initial client connection {}",
-                            e
-                        )))?;
-                        continue;
+                }
+            } else {
+                let listener = TcpListener::bind(ip_address)?;
+                listener.set_nonblocking(true)?;
+
+                for stream in listener.incoming() {
+                    self.read_receiver();
+                    if self.stop_incoming {
+                        break;
                     }
-                };
+                    match stream {
+                        Ok(stream) => {
+                            let (sx, rx): (
+                                Sender<MessageSingleUploader>,
+                                Receiver<MessageSingleUploader>,
+                            ) = mpsc::channel();
+
+                            self.remove_dead_uploaders();
+                            self.single_uploaders.push(sx);
+
+                            let single_config = self.config.clone();
+                            let app_sender_clone = self.app_sender.clone();
+                            thread::spawn(move || {
+                                let thread_app_sender = app_sender_clone.clone();
+                                let ip = match stream.peer_addr() {
+                                    Ok(addr) => addr.to_string(),
+                                    Err(_) => "Unknown IP".to_string(),
+                                };
+                                // Box<dyn Any + Send>>
+                                let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                                    let mut single_uploader =
+                                        SingleUploader::new(rx, single_config, app_sender_clone);
+                                    match single_uploader.run(&stream, None) {
+                                        Ok(res) => res,
+                                        Err(e) => {
+                                            thread_app_sender
+                                                .send(AppAggMessage::LogDebug(format!(
+                                                    "Uploader run error. {} - {}",
+                                                    ip, e
+                                                )))
+                                                .unwrap();
+                                            // Mid download. Upload is now disconnected.
+                                            if single_uploader.active_msg
+                                                == MSG_FILE_SELECTION_CONTINUE
+                                            {
+                                                thread_app_sender
+                                                    .send(AppAggMessage::UploadDisconnected(
+                                                        single_uploader.nickname,
+                                                    ))
+                                                    .unwrap();
+                                            }
+                                            RunLoopResult::Success
+                                        }
+                                    }
+                                }));
+
+                                // TODO this shutdown will shutdown the reverse connection?
+                                //stream.shutdown(Shutdown::Both).ok();
+
+                                match result {
+                                    Ok(res) => match res {
+                                        RunLoopResult::Success => {
+                                            stream.shutdown(Shutdown::Both).ok();
+                                        }
+                                        RunLoopResult::ReverseConnection => {}
+                                    },
+                                    Err(e) => {
+                                        thread_app_sender
+                                            .send(AppAggMessage::LogDebug(format!(
+                                                "Uploader thread error. {} - {:?}",
+                                                ip, e
+                                            )))
+                                            .unwrap();
+                                        stream.shutdown(Shutdown::Both).ok();
+                                    }
+                                }
+                            });
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(time::Duration::from_secs(1));
+                            continue;
+                        }
+                        Err(e) => {
+                            self.app_sender.send(AppAggMessage::LogDebug(format!(
+                                "Failed initial client connection {}",
+                                e
+                            )))?;
+                            continue;
+                        }
+                    };
+                }
             }
         }
     }
@@ -283,6 +401,7 @@ impl UploaderManager {
         self.stop_incoming = true;
         self.send_message_to_all_uploaders(MessageSingleUploader::ShutdownConn);
         self.single_uploaders.clear();
+        self.single_uploaders_rev.clear();
     }
 
     fn remove_dead_uploaders(&mut self) {
@@ -292,6 +411,9 @@ impl UploaderManager {
     fn send_message_to_all_uploaders(&mut self, message: MessageSingleUploader) {
         self.single_uploaders
             .retain(|uploader| uploader.send(message.clone()).is_ok());
+
+        self.single_uploaders_rev
+            .retain(|_, uploader| uploader.send(message.clone()).is_ok());
     }
 }
 
@@ -299,6 +421,11 @@ impl UploaderManager {
 enum MessageSingleUploader {
     ShutdownConn,
     DoNothing,
+}
+
+enum RunLoopResult {
+    Success,
+    ReverseConnection,
 }
 
 struct SingleUploader {
@@ -329,7 +456,11 @@ impl SingleUploader {
 
     // Ok -> An "expected" return. Eg Upload finished and even a user not allowed
     // Error -> An "unexpected" return. Eg failed to parse an IP
-    pub fn run(&mut self, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
+    pub fn run(
+        &mut self,
+        stream: &TcpStream,
+        reverse_user: Option<SharedUser>,
+    ) -> Result<RunLoopResult, Box<dyn Error>> {
         let client_connecting_addr = stream.peer_addr()?;
 
         let client_connecting_ip = client_connecting_addr.ip().to_string();
@@ -339,6 +470,7 @@ impl SingleUploader {
         )))?;
 
         let mut shared_users = self.config.get_shared_users();
+        // TODO how to hanadle Ignore Incoming with Reverse Conneciton
         if !self.config.is_ignore_incoming() {
             // Find valid SharedUser
             let mut shared_user: Option<SharedUser> = None;
@@ -357,7 +489,7 @@ impl SingleUploader {
                         client_connecting_ip
                     )))?;
                     thread::sleep(time::Duration::from_secs(30));
-                    return Ok(());
+                    return Ok(RunLoopResult::Success);
                 }
             };
 
@@ -365,7 +497,7 @@ impl SingleUploader {
             // Not allowed check below too
             if !shared_user.allowed {
                 self.process_not_allowed()?;
-                return Ok(());
+                return Ok(RunLoopResult::Success);
             }
 
             self.app_sender.send(AppAggMessage::LogInfo(format!(
@@ -385,14 +517,21 @@ impl SingleUploader {
             shared_users,
             self.config.get_local_private_id_bytes(),
         );
-        let mut encrypted_stream = transmitic_stream.wait_for_incoming()?;
+
+        let mut encrypted_stream: EncryptedStream;
+        if reverse_user.is_some() {
+            encrypted_stream = transmitic_stream.connect()?;
+            encrypted_stream.write(MSG_REVERSE, &Vec::new())?;
+        } else {
+            encrypted_stream = transmitic_stream.wait_for_incoming()?;
+        }
         let shared_user = encrypted_stream.shared_user.clone();
         self.nickname = shared_user.nickname.clone();
 
         // Not allowed check above too
         if !shared_user.allowed {
             self.process_not_allowed()?;
-            return Ok(());
+            return Ok(RunLoopResult::Success);
         }
 
         self.app_sender.send(AppAggMessage::LogInfo(format!(
@@ -410,14 +549,27 @@ impl SingleUploader {
             if self.should_shutdown {
                 break;
             }
-            self.run_loop(
+            match self.run_loop(
                 &mut encrypted_stream,
                 &everything_file,
                 &everything_file_json_bytes,
-            )?;
+            ) {
+                Ok(res) => match res {
+                    RunLoopResult::Success => {}
+                    RunLoopResult::ReverseConnection => {
+                        self.app_sender
+                            .send(AppAggMessage::ReverseConnection(encrypted_stream))
+                            .ok();
+                        return Ok(RunLoopResult::ReverseConnection);
+                    }
+                },
+                Err(e) => {
+                    return Err(e);
+                }
+            }
         }
 
-        Ok(())
+        Ok(RunLoopResult::Success)
     }
 
     fn process_not_allowed(&self) -> Result<(), Box<dyn Error>> {
@@ -434,14 +586,14 @@ impl SingleUploader {
         encrypted_stream: &mut EncryptedStream,
         everything_file: &SharedFile,
         everything_file_json_bytes: &[u8],
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<RunLoopResult, Box<dyn Error>> {
         let mut progress_current_time = Instant::now();
 
         encrypted_stream.read()?;
 
         self.read_receiver()?;
         if self.should_shutdown {
-            return Ok(());
+            return Ok(RunLoopResult::Success);
         }
 
         let client_message = encrypted_stream.get_message()?;
@@ -473,11 +625,11 @@ impl SingleUploader {
 
                 self.read_receiver()?;
                 if self.should_shutdown {
-                    return Ok(());
+                    return Ok(RunLoopResult::Success);
                 }
 
                 if msg == MSG_FILE_LIST_FINAL {
-                    return Ok(());
+                    return Ok(RunLoopResult::Success);
                 }
 
                 sent_bytes += MAX_DATA_SIZE;
@@ -506,7 +658,7 @@ impl SingleUploader {
                         self.nickname, client_file_choice
                     )))?;
                     encrypted_stream.write(MSG_FILE_INVALID_FILE, &Vec::with_capacity(1))?;
-                    return Ok(());
+                    return Ok(RunLoopResult::Success);
                 }
             };
 
@@ -517,7 +669,7 @@ impl SingleUploader {
                     self.nickname, client_file_choice
                 )))?;
                 encrypted_stream.write(MSG_CANNOT_SELECT_DIRECTORY, &Vec::with_capacity(1))?;
-                return Ok(());
+                return Ok(RunLoopResult::Success);
             }
 
             // Send file to client
@@ -576,7 +728,7 @@ impl SingleUploader {
 
                 self.read_receiver()?;
                 if self.should_shutdown {
-                    return Ok(());
+                    return Ok(RunLoopResult::Success);
                 }
             }
 
@@ -594,6 +746,8 @@ impl SingleUploader {
                 "File transfer to '{}' completed '{}'",
                 self.nickname, client_file_choice
             )))?;
+        } else if client_message == MSG_REVERSE {
+            return Ok(RunLoopResult::ReverseConnection);
         } else {
             return Err(format!(
                 "'{}' Invalid client selection '{}'",
@@ -602,7 +756,7 @@ impl SingleUploader {
             .into());
         }
 
-        Ok(())
+        Ok(RunLoopResult::Success)
     }
 
     fn read_receiver(&mut self) -> Result<(), Box<dyn Error>> {

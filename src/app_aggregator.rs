@@ -2,8 +2,9 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
-use std::thread;
+use std::{thread, time};
 
+use crate::encrypted_stream::{self, EncryptedStream};
 use crate::incoming_uploader::IncomingUploaderError;
 use crate::logger::{LogLevel, Logger};
 use crate::transmitic_core::{SingleDownloadState, SingleUploadState};
@@ -62,6 +63,7 @@ pub enum AppAggMessage {
     UploadErrorGeneric(String),
     UploadErrorPortInUse,
     AppFailedKill(String),
+    ReverseConnection(EncryptedStream),
 }
 
 pub fn run_app_loop(
@@ -278,6 +280,12 @@ fn app_loop(
                     .lock()
                     .unwrap_or_else(|err| err.into_inner());
                 *incoming_error_guard = Some(IncomingUploaderError::PortInUse);
+            }
+            AppAggMessage::ReverseConnection(encrypted_stream) => {
+                log_message(&logger, "REVERSE APPAGG".to_string(), LogLevel::Critical);
+                loop {
+                    thread::sleep(time::Duration::from_secs(1));
+                }
             }
         }
     }

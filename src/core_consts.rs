@@ -20,6 +20,7 @@ pub const MSG_FILE_FINISHED: u16 = 5;
 pub const MSG_FILE_INVALID_FILE: u16 = 6;
 pub const MSG_CANNOT_SELECT_DIRECTORY: u16 = 7;
 pub const MSG_FILE_SELECTION_CONTINUE: u16 = 8; // TODO Only use CONTINUE?
+pub const MSG_REVERSE: u16 = 9; // TODO Only use CONTINUE?
 
 pub const CRC_MESSAGES: [u16; 4] = [
     MSG_FILE_LIST_PIECE,
