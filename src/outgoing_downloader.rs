@@ -54,12 +54,148 @@ pub enum RefreshSharedMessages {
     FileData(Result<SharedFile, String>),
 }
 
+enum MessageDownloadManager {
+    NewConfig(Config),
+    DownloadsCancelAll,
+    DownloadCancell(String, String),
+    DownloadsResumeAll,
+    DownloadsPauseAll,
+    DownloadSelected(Vec<SelectedDownload>),
+}
+
 pub struct OutgoingDownloader {
+    sender: Sender<MessageDownloadManager>,
+    app_sender: Sender<AppAggMessage>,
+    refresh_data: HashMap<String, InternalRefreshData>,
+    config: Config,
+}
+
+impl OutgoingDownloader {
+    pub fn new(config: Config, app_sender: Sender<AppAggMessage>) -> OutgoingDownloader {
+        let (sx, rx): (
+            Sender<MessageDownloadManager>,
+            Receiver<MessageDownloadManager>,
+        ) = mpsc::channel();
+
+        let sx_clone = sx.clone();
+        let mut refresh_data = HashMap::with_capacity(10);
+        set_refresh_data(&config, &mut refresh_data);
+
+        thread::spawn(move || {
+            let download_sender = sx_clone.clone();
+            let app_sender_loop = app_sender.clone();
+            // TODO err unwrap
+            let mut downloader_manager =
+                OutgoingDownloaderManager::new(rx, config, app_sender).unwrap();
+
+            loop {
+                downloader_manager.run();
+            }
+        });
+
+        OutgoingDownloader {
+            sender: sx,
+            app_sender,
+            refresh_data,
+            config,
+        }
+    }
+
+    pub fn set_new_config(&mut self, config: Config) {
+        self.config = config;
+        set_refresh_data(&self.config, &mut self.refresh_data);
+    }
+
+    pub fn start_refresh_shared_with_me_all(&mut self) {
+        for shared_user in self.config.get_shared_users() {
+            self.start_refresh_shared_with_me_single_user(shared_user.nickname.clone());
+        }
+    }
+
+    pub fn start_refresh_shared_with_me_single_user(&mut self, nickname: String) {
+        let (sx, rx) = mpsc::channel();
+
+        match self.refresh_data.get_mut(&nickname) {
+            Some(data) => {
+                data.recv = Some(rx);
+            }
+            None => self
+                .app_sender
+                .send(AppAggMessage::AppFailedKill(format!(
+                    "Start refresh with missing key: '{}'",
+                    nickname
+                )))
+                .unwrap(),
+        }
+        let config_clone = self.config.clone();
+
+        thread::spawn(move || {
+            for shared_user in config_clone.get_shared_users() {
+                if shared_user.nickname != nickname {
+                    continue;
+                }
+
+                let r = refresh_single_user(&config_clone, &shared_user).map_err(|e| e.to_string());
+                sx.send(RefreshSharedMessages::FileData(r)).ok();
+                break;
+            }
+        });
+    }
+
+    pub fn get_shared_with_me_data(&mut self) -> HashMap<String, RefreshData> {
+        for (_, data) in self.refresh_data.iter_mut() {
+            match &data.recv {
+                Some(recv) => match recv.try_recv() {
+                    Ok(msg) => match msg {
+                        RefreshSharedMessages::FileData(d) => match d {
+                            Ok(shared_file) => {
+                                data.data = Ok(shared_file);
+                                data.recv = None;
+                            }
+                            Err(e) => {
+                                data.data = Err(e);
+                                data.recv = None;
+                            }
+                        },
+                    },
+                    Err(e) => match e {
+                        mpsc::TryRecvError::Empty => {}
+                        mpsc::TryRecvError::Disconnected => {
+                            data.data =
+                                Err("Transmitic Error: Channel disconnected before refresh data was received."
+                                    .to_string());
+                            data.recv = None;
+                        }
+                    },
+                },
+                None => {}
+            }
+        }
+
+        let mut refresh_data = HashMap::new();
+        for (nickname, data) in self.refresh_data.iter() {
+            let in_progress = matches!(data.recv, Some(_));
+
+            refresh_data.insert(
+                nickname.clone(),
+                RefreshData {
+                    owner: nickname.clone(),
+                    data: data.data.clone(),
+                    in_progress,
+                },
+            );
+        }
+
+        refresh_data
+    }
+}
+
+pub struct OutgoingDownloaderManager {
+    receiver: Receiver<MessageDownloadManager>,
     config: Config,
     channel_map: HashMap<String, Sender<MessageSingleDownloader>>,
     app_sender: Sender<AppAggMessage>,
     is_downloading_paused: bool,
-    refresh_data: HashMap<String, InternalRefreshData>,
 }
 
 fn set_refresh_data(config: &Config, refresh_data: &mut HashMap<String, InternalRefreshData>) {
@@ -80,23 +216,44 @@ fn set_refresh_data(config: &Config, refresh_data: &mut HashMap<String, Internal
     refresh_data.retain(|k, _| nicknames.contains(k));
 }
 
-impl OutgoingDownloader {
+impl OutgoingDownloaderManager {
     pub fn new(
+        receiver: Receiver<MessageDownloadManager>,
         config: Config,
         app_sender: Sender<AppAggMessage>,
-    ) -> Result<OutgoingDownloader, Box<dyn Error>> {
+    ) -> Result<OutgoingDownloaderManager, Box<dyn Error>> {
         create_downloads_dir()?;
         let channel_map = HashMap::with_capacity(10);
-        let mut refresh_data = HashMap::with_capacity(10);
-        set_refresh_data(&config, &mut refresh_data);
 
-        Ok(OutgoingDownloader {
+        Ok(OutgoingDownloaderManager {
+            receiver,
             config,
             channel_map,
             app_sender,
             is_downloading_paused: false,
-            refresh_data,
         })
+    }
+
+    pub fn run(&mut self) {
+        loop {
+            self.read_receiver();
+        }
+    }
+
+    fn read_receiver(&mut self) {
+        loop {
+            match self.receiver.try_recv() {
+                Ok(msg) => match msg {
+                    MessageDownloadManager::NewConfig(_) => todo!(),
+                    MessageDownloadManager::DownloadsCancelAll => todo!(),
+                    MessageDownloadManager::DownloadCancell(_, _) => todo!(),
+                    MessageDownloadManager::DownloadsResumeAll => todo!(),
+                    MessageDownloadManager::DownloadsPauseAll => todo!(),
+                    MessageDownloadManager::DownloadSelected(_) => todo!(),
+                },
+                Err(_) => todo!(),
+            }
+        }
     }
 
     pub fn is_downloading_paused(&self) -> bool {
@@ -196,7 +353,6 @@ impl OutgoingDownloader {
 
     pub fn set_new_config(&mut self, config: Config) {
         self.config = config;
-        set_refresh_data(&self.config, &mut self.refresh_data);
     }
 
     pub fn set_new_private_id(&mut self, private_id_bytes: Vec<u8>) {
@@ -344,89 +500,6 @@ impl OutgoingDownloader {
         }
 
         Ok(())
-    }
-
-    pub fn start_refresh_shared_with_me_all(&mut self) {
-        for shared_user in self.config.get_shared_users() {
-            self.start_refresh_shared_with_me_single_user(shared_user.nickname.clone());
-        }
-    }
-
-    pub fn start_refresh_shared_with_me_single_user(&mut self, nickname: String) {
-        let (sx, rx) = mpsc::channel();
-
-        match self.refresh_data.get_mut(&nickname) {
-            Some(data) => {
-                data.recv = Some(rx);
-            }
-            None => self
-                .app_sender
-                .send(AppAggMessage::AppFailedKill(format!(
-                    "Start refresh with missing key: '{}'",
-                    nickname
-                )))
-                .unwrap(),
-        }
-        let config_clone = self.config.clone();
-
-        thread::spawn(move || {
-            for shared_user in config_clone.get_shared_users() {
-                if shared_user.nickname != nickname {
-                    continue;
-                }
-
-                let r = refresh_single_user(&config_clone, &shared_user).map_err(|e| e.to_string());
-                sx.send(RefreshSharedMessages::FileData(r)).ok();
-                break;
-            }
-        });
-    }
-
-    pub fn get_shared_with_me_data(&mut self) -> HashMap<String, RefreshData> {
-        for (_, data) in self.refresh_data.iter_mut() {
-            match &data.recv {
-                Some(recv) => match recv.try_recv() {
-                    Ok(msg) => match msg {
-                        RefreshSharedMessages::FileData(d) => match d {
-                            Ok(shared_file) => {
-                                data.data = Ok(shared_file);
-                                data.recv = None;
-                            }
-                            Err(e) => {
-                                data.data = Err(e);
-                                data.recv = None;
-                            }
-                        },
-                    },
-                    Err(e) => match e {
-                        mpsc::TryRecvError::Empty => {}
-                        mpsc::TryRecvError::Disconnected => {
-                            data.data =
-                                Err("Transmitic Error: Channel disconnected before refresh data was received."
-                                    .to_string());
-                            data.recv = None;
-                        }
-                    },
-                },
-                None => {}
-            }
-        }
-
-        let mut refresh_data = HashMap::new();
-        for (nickname, data) in self.refresh_data.iter() {
-            let in_progress = matches!(data.recv, Some(_));
-
-            refresh_data.insert(
-                nickname.clone(),
-                RefreshData {
-                    owner: nickname.clone(),
-                    data: data.data.clone(),
-                    in_progress,
-                },
-            );
-        }
-
-        refresh_data
     }
 }
 
@@ -659,6 +732,8 @@ impl SingleDownloader {
 
             remove_invalid_files(&mut everything_file);
             //print_shared_files(&everything_file, "");
+
+            // TODO REVERSE send everything file as the new shared with me data
 
             loop {
                 let path_active_download = match self.download_queue.get(0) {

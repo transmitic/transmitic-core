@@ -14,7 +14,7 @@ use crate::{
     config::{self, Config, ConfigSharedFile, SharedUser},
     incoming_uploader::{IncomingUploader, IncomingUploaderError, SharingState},
     logger::{LogLevel, Logger, DEFAULT_LOG_LEVEL, DEFAULT_LOG_TO_FILE},
-    outgoing_downloader::OutgoingDownloader,
+    outgoing_downloader::{OutgoingDownloader, OutgoingDownloaderManager},
     shared_file::{RefreshData, SelectedDownload},
 };
 
@@ -126,8 +126,10 @@ impl TransmiticCore {
             config.get_path_dir_config().as_os_str()
         )))?;
 
-        let mut outgoing_downloader = OutgoingDownloader::new(config.clone(), app_sender.clone())?;
-        outgoing_downloader.start_downloading();
+        let mut outgoing_downloader = OutgoingDownloader::new(config.clone(), app_sender.clone());
+
+        // TODO
+        //outgoing_downloader.start_downloading();
 
         let incoming_uploader = IncomingUploader::new(config.clone(), app_sender.clone());
 

@@ -45,6 +45,8 @@ pub struct OfflineErrorMessage {
     pub error: String,
 }
 
+// TODO fix this?
+#[allow(clippy::large_enum_variant)]
 pub enum AppAggMessage {
     LogDebug(String),
     LogInfo(String),
