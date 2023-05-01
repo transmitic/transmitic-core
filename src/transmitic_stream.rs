@@ -13,7 +13,7 @@ use crate::{
     core_consts::{TRAN_API_MAJOR, TRAN_API_MINOR, TRAN_MAGIC_NUMBER},
     crypto,
     encrypted_stream::EncryptedStream,
-    outgoing_downloader::{ERR_REMOTE_ID_NOT_FOUND},
+    outgoing_downloader::ERR_REMOTE_ID_NOT_FOUND,
 };
 
 const BUFFER_SIZE: usize = 32 + 64;
@@ -24,6 +24,7 @@ pub struct TransmiticStream {
     connecting_ip: String,
     shared_users: Vec<SharedUser>,
     private_key_pair: signature::Ed25519KeyPair,
+    private_id_bytes: Vec<u8>,
     matched_shared_user: Option<SharedUser>,
 }
 
@@ -45,6 +46,7 @@ impl TransmiticStream {
             connecting_ip,
             shared_users,
             private_key_pair,
+            private_id_bytes,
             matched_shared_user: None,
         }
     }
@@ -83,7 +85,12 @@ impl TransmiticStream {
                 std::process::exit(1);
             }
         };
-        let encrypted_stream = EncryptedStream::new(cloned_stream, encryption_key, shared_user);
+        let encrypted_stream = EncryptedStream::new(
+            cloned_stream,
+            encryption_key,
+            shared_user,
+            self.private_id_bytes.clone(),
+        );
         Ok(encrypted_stream)
     }
 
@@ -158,10 +165,13 @@ impl TransmiticStream {
                 signature::UnparsedPublicKey::new(&signature::ED25519, remote_public_id_bytes);
 
             // Verify diffie bytes were signed with the PublicID we have for this user
-            if remote_public_key.verify(
-                &remote_diffie_public_bytes,
-                &remote_diffie_signed_public_bytes,
-            ).is_ok() {
+            if remote_public_key
+                .verify(
+                    &remote_diffie_public_bytes,
+                    &remote_diffie_signed_public_bytes,
+                )
+                .is_ok()
+            {
                 // Found SharedUser
                 self.matched_shared_user = Some(shared_user.to_owned());
                 break;

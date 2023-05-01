@@ -7,6 +7,7 @@ use std::{thread, time};
 use crate::encrypted_stream::{self, EncryptedStream};
 use crate::incoming_uploader::IncomingUploaderError;
 use crate::logger::{LogLevel, Logger};
+use crate::outgoing_downloader::OutgoingDownloader;
 use crate::transmitic_core::{SingleDownloadState, SingleUploadState};
 
 // TODO combine them all into 1 struct?
@@ -67,13 +68,13 @@ pub enum AppAggMessage {
 }
 
 pub fn run_app_loop(
+    receiver: Receiver<AppAggMessage>,
     downlaod_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
     logger: Arc<Mutex<Logger>>,
     incoming_uploader_error: Arc<Mutex<Option<IncomingUploaderError>>>,
-) -> Sender<AppAggMessage> {
-    let (sender, receiver): (Sender<AppAggMessage>, Receiver<AppAggMessage>) = mpsc::channel();
-
+    outgoing_downloader: Arc<Mutex<OutgoingDownloader>>,
+) {
     thread::spawn(move || {
         app_loop(
             receiver,
@@ -81,16 +82,16 @@ pub fn run_app_loop(
             upload_state,
             logger,
             incoming_uploader_error,
+            outgoing_downloader,
         );
     });
-
-    sender
 }
 
 // TODO use attribute? i32
 pub enum ExitCodes {
     AppLoopRecFailed = 2,
     AppFailedKill = 3,
+    RevConnOutgoingLock = 4,
 }
 
 #[allow(clippy::field_reassign_with_default)]
@@ -100,6 +101,7 @@ fn app_loop(
     upload_state: Arc<RwLock<HashMap<String, SingleUploadState>>>,
     logger: Arc<Mutex<Logger>>,
     incoming_uploader_error: Arc<Mutex<Option<IncomingUploaderError>>>,
+    outgoing_downloader: Arc<Mutex<OutgoingDownloader>>,
 ) {
     loop {
         let msg = match receiver.recv() {
@@ -283,8 +285,16 @@ fn app_loop(
             }
             AppAggMessage::ReverseConnection(encrypted_stream) => {
                 log_message(&logger, "REVERSE APPAGG".to_string(), LogLevel::Critical);
-                loop {
-                    thread::sleep(time::Duration::from_secs(1));
+
+                let shared_user = encrypted_stream.shared_user.clone();
+                match outgoing_downloader.lock() {
+                    Ok(mut guard) => {
+                        guard.start_downloading_single_user(shared_user, Some(encrypted_stream));
+                    }
+                    Err(e) => {
+                        eprintln!("Reverse Connection outgoing lock failed. {}", e);
+                        std::process::exit(ExitCodes::RevConnOutgoingLock as i32);
+                    }
                 }
             }
         }

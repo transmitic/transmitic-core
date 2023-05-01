@@ -2,7 +2,10 @@ use std::{
     collections::{HashMap, VecDeque},
     error::Error,
     path::PathBuf,
-    sync::{mpsc::Sender, Arc, Mutex, RwLock},
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Arc, Mutex, RwLock,
+    },
 };
 
 extern crate x25519_dalek;
@@ -31,7 +34,7 @@ pub struct TransmiticCore {
     config: Config,
     is_first_start: bool,
     sharing_state: SharingState,
-    outgoing_downloader: OutgoingDownloader,
+    outgoing_downloader: Arc<Mutex<OutgoingDownloader>>,
     incoming_uploader: IncomingUploader,
     incoming_uploader_error: Arc<Mutex<Option<IncomingUploaderError>>>,
     download_state: Arc<RwLock<HashMap<String, SingleDownloadState>>>,
@@ -113,11 +116,20 @@ impl TransmiticCore {
         let incoming_uploader_error_arc = Arc::new(Mutex::new(incoming_uploader_error));
         let incoming_uploader_error_clone = incoming_uploader_error_arc.clone();
 
-        let app_sender = run_app_loop(
+        let (app_sender, app_receiver): (Sender<AppAggMessage>, Receiver<AppAggMessage>) =
+            mpsc::channel();
+
+        let mut outgoing_downloader = OutgoingDownloader::new(config.clone(), app_sender.clone())?;
+        outgoing_downloader.start_downloading();
+        let outgoing_arc = Arc::new(Mutex::new(outgoing_downloader));
+
+        run_app_loop(
+            app_receiver,
             arc_clone,
             arc_upload_clone,
             logger_clone,
             incoming_uploader_error_clone,
+            outgoing_arc.clone(),
         );
 
         app_sender.send(AppAggMessage::LogCritical("AppAgg started".to_string()))?;
@@ -126,16 +138,13 @@ impl TransmiticCore {
             config.get_path_dir_config().as_os_str()
         )))?;
 
-        let mut outgoing_downloader = OutgoingDownloader::new(config.clone(), app_sender.clone())?;
-        outgoing_downloader.start_downloading();
-
         let incoming_uploader = IncomingUploader::new(config.clone(), app_sender.clone());
 
         Ok(TransmiticCore {
             config,
             is_first_start,
             sharing_state: SharingState::Off,
-            outgoing_downloader,
+            outgoing_downloader: outgoing_arc,
             incoming_uploader,
             incoming_uploader_error: incoming_uploader_error_arc,
             download_state: arc_download_state,
@@ -195,7 +204,9 @@ impl TransmiticCore {
         self.config
             .add_new_user(new_nickname, new_public_id, new_ip, new_port)?;
         self.incoming_uploader.set_new_config(self.config.clone());
-        self.outgoing_downloader.set_new_config(self.config.clone());
+
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.set_new_config(self.config.clone());
         Ok(())
     }
 
@@ -218,9 +229,10 @@ impl TransmiticCore {
             .send(AppAggMessage::LogWarning("Create new ID".to_string()))?;
         self.config.create_new_id()?;
         self.incoming_uploader.set_new_config(self.config.clone());
-        self.outgoing_downloader.set_new_config(self.config.clone());
-        self.outgoing_downloader
-            .set_new_private_id(self.config.get_local_private_id_bytes());
+
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.set_new_config(self.config.clone());
+        outgoing_guard.set_new_private_id(self.config.get_local_private_id_bytes());
         Ok(())
     }
 
@@ -228,7 +240,9 @@ impl TransmiticCore {
         self.app_sender
             .send(AppAggMessage::LogInfo("Cancel all downloads".to_string()))
             .ok();
-        self.outgoing_downloader.downloads_cancel_all();
+
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.downloads_cancel_all();
     }
 
     pub fn downloads_cancel_single(&mut self, nickname: String, file_path: String) {
@@ -238,22 +252,27 @@ impl TransmiticCore {
                 &nickname, &file_path
             )))
             .ok();
-        self.outgoing_downloader
-            .downloads_cancel_single(nickname, file_path);
+
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.downloads_cancel_single(nickname, file_path);
     }
 
     pub fn downloads_resume_all(&mut self) {
         self.app_sender
             .send(AppAggMessage::LogInfo("Resume all downloads".to_string()))
             .ok();
-        self.outgoing_downloader.downloads_resume_all();
+
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.downloads_resume_all();
     }
 
     pub fn downloads_pause_all(&mut self) {
         self.app_sender
             .send(AppAggMessage::LogInfo("Pause all downloads".to_string()))
             .ok();
-        self.outgoing_downloader.downloads_pause_all();
+
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.downloads_pause_all();
     }
 
     pub fn downloads_clear_finished(&mut self) {
@@ -299,12 +318,15 @@ impl TransmiticCore {
                 &downloads
             )))
             .ok();
-        self.outgoing_downloader.download_selected(downloads)?;
+
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.download_selected(downloads)?;
         Ok(())
     }
 
     pub fn is_downloading_paused(&self) -> bool {
-        self.outgoing_downloader.is_downloading_paused()
+        let outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.is_downloading_paused()
     }
 
     pub fn set_port(&mut self, port: String) -> Result<(), Box<dyn Error>> {
@@ -412,16 +434,18 @@ impl TransmiticCore {
     }
 
     pub fn get_shared_with_me_data(&mut self) -> HashMap<String, RefreshData> {
-        self.outgoing_downloader.get_shared_with_me_data()
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.get_shared_with_me_data()
     }
 
     pub fn start_refresh_shared_with_me_all(&mut self) {
-        self.outgoing_downloader.start_refresh_shared_with_me_all();
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.start_refresh_shared_with_me_all();
     }
 
     pub fn start_refresh_shared_with_me_single_user(&mut self, nickname: String) {
-        self.outgoing_downloader
-            .start_refresh_shared_with_me_single_user(nickname);
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.start_refresh_shared_with_me_single_user(nickname);
     }
 
     pub fn remove_file_from_sharing(&mut self, file_path: String) -> Result<(), Box<dyn Error>> {
@@ -461,8 +485,10 @@ impl TransmiticCore {
             .ok();
         self.config.remove_user(nickname.clone())?;
         self.incoming_uploader.set_new_config(self.config.clone());
-        self.outgoing_downloader.set_new_config(self.config.clone());
-        self.outgoing_downloader.remove_user(&nickname);
+
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.set_new_config(self.config.clone());
+        outgoing_guard.remove_user(&nickname);
         Ok(())
     }
 
@@ -547,8 +573,10 @@ impl TransmiticCore {
         self.config
             .update_user(nickname.clone(), new_public_id, new_ip, new_port)?;
         self.incoming_uploader.set_new_config(self.config.clone());
-        self.outgoing_downloader.set_new_config(self.config.clone());
-        self.outgoing_downloader.update_user(&nickname)?;
+
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.set_new_config(self.config.clone());
+        outgoing_guard.update_user(&nickname)?;
         Ok(())
     }
 

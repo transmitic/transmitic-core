@@ -26,6 +26,7 @@ pub struct EncryptedStream {
     crypto_buffer: Vec<u8>,
     pub buffer: Vec<u8>,
     pub shared_user: SharedUser,
+    pub private_id_bytes: Vec<u8>,
 }
 
 impl EncryptedStream {
@@ -33,6 +34,7 @@ impl EncryptedStream {
         stream: TcpStream,
         encryption_key: [u8; 32],
         shared_user: SharedUser,
+        private_id_bytes: Vec<u8>,
     ) -> EncryptedStream {
         let key = GenericArray::from_slice(&encryption_key[..]);
         // Create AES and stream
@@ -48,6 +50,7 @@ impl EncryptedStream {
             crypto_buffer,
             buffer,
             shared_user,
+            private_id_bytes,
         }
     }
 
