@@ -15,9 +15,11 @@ use std::{
     error::Error,
     fs::{self, metadata, File, OpenOptions},
     io::{ErrorKind, Seek, SeekFrom, Write},
+    mem,
     net::{SocketAddr, TcpStream},
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::Instant,
 };
 use std::{fmt::Write as _, path};
@@ -65,7 +67,7 @@ pub struct OutgoingDownloader {
     >,
     app_sender: Sender<AppAggMessage>,
     is_downloading_paused: bool,
-    refresh_data: HashMap<String, InternalRefreshData>,
+    refresh_data: Arc<Mutex<HashMap<String, InternalRefreshData>>>,
 }
 
 fn set_refresh_data(config: &Config, refresh_data: &mut HashMap<String, InternalRefreshData>) {
@@ -93,8 +95,10 @@ impl OutgoingDownloader {
     ) -> Result<OutgoingDownloader, Box<dyn Error>> {
         create_downloads_dir()?;
         let channel_map = HashMap::with_capacity(10);
-        let mut refresh_data = HashMap::with_capacity(10);
-        set_refresh_data(&config, &mut refresh_data);
+        let mut refresh_data_map = HashMap::with_capacity(10);
+        set_refresh_data(&config, &mut refresh_data_map);
+
+        let refresh_data = Arc::new(Mutex::new(refresh_data_map));
 
         Ok(OutgoingDownloader {
             config,
@@ -118,7 +122,7 @@ impl OutgoingDownloader {
     pub fn start_downloading_single_user(
         &mut self,
         user: SharedUser,
-        reverse_connection: Option<EncryptedStream>,
+        mut reverse_connection: Option<EncryptedStream>,
     ) {
         // TODO func
         let mut path_queue_file: PathBuf = self.config.get_path_dir_config();
@@ -163,17 +167,17 @@ impl OutgoingDownloader {
             }
         }
 
-        if let Some(enc) = reverse_connection {
-            match self.channel_map.get(&user.nickname) {
-                Some((_, rev_sx)) => {
+        match self.channel_map.get(&user.nickname) {
+            Some((_, rev_sx)) => match reverse_connection.take() {
+                Some(enc) => {
                     rev_sx
                         .send(MessageRevSingleDownloader::NewConnection(enc))
                         .ok();
                     return;
                 }
                 None => {}
-            }
-            return;
+            },
+            None => {}
         }
 
         let (sx, rx): (
@@ -185,6 +189,7 @@ impl OutgoingDownloader {
             Receiver<MessageRevSingleDownloader>,
         ) = mpsc::channel();
         self.channel_map.insert(user.nickname.clone(), (sx, rev_sx));
+        let refresh_data_clone = self.refresh_data.clone();
 
         thread::spawn(move || {
             let thread_app_sender = app_sender_clone.clone();
@@ -198,6 +203,7 @@ impl OutgoingDownloader {
                 app_sender_clone,
                 is_downloading_paused,
                 reverse_connection,
+                refresh_data_clone,
             );
 
             let mut continue_run = true;
@@ -218,6 +224,7 @@ impl OutgoingDownloader {
                                     e
                                 )))
                                 .unwrap();
+                            std::process::exit(10); // TODO remove
                             if e.to_string().starts_with(ERR_REMOTE_ID_MISMATCH) {
                                 thread_app_sender
                                     .send(AppAggMessage::OfflineError(OfflineErrorMessage {
@@ -255,7 +262,9 @@ impl OutgoingDownloader {
 
     pub fn set_new_config(&mut self, config: Config) {
         self.config = config;
-        set_refresh_data(&self.config, &mut self.refresh_data);
+
+        let mut refresh_guard = self.refresh_data.lock().unwrap();
+        set_refresh_data(&self.config, &mut refresh_guard);
     }
 
     pub fn set_new_private_id(&mut self, private_id_bytes: Vec<u8>) {
@@ -414,7 +423,9 @@ impl OutgoingDownloader {
     pub fn start_refresh_shared_with_me_single_user(&mut self, nickname: String) {
         let (sx, rx) = mpsc::channel();
 
-        match self.refresh_data.get_mut(&nickname) {
+        let mut refresh_guard = self.refresh_data.lock().unwrap();
+
+        match refresh_guard.get_mut(&nickname) {
             Some(data) => {
                 data.recv = Some(rx);
             }
@@ -442,7 +453,9 @@ impl OutgoingDownloader {
     }
 
     pub fn get_shared_with_me_data(&mut self) -> HashMap<String, RefreshData> {
-        for (_, data) in self.refresh_data.iter_mut() {
+        let mut refresh_guard = self.refresh_data.lock().unwrap();
+
+        for (_, data) in refresh_guard.iter_mut() {
             match &data.recv {
                 Some(recv) => match recv.try_recv() {
                     Ok(msg) => match msg {
@@ -472,7 +485,7 @@ impl OutgoingDownloader {
         }
 
         let mut refresh_data = HashMap::new();
-        for (nickname, data) in self.refresh_data.iter() {
+        for (nickname, data) in refresh_guard.iter() {
             let in_progress = matches!(data.recv, Some(_));
 
             refresh_data.insert(
@@ -584,6 +597,7 @@ struct SingleDownloader {
     shutdown: bool,
     progress_current_time: Instant,
     reverse_connection: Option<EncryptedStream>,
+    refresh_data: Arc<Mutex<HashMap<String, InternalRefreshData>>>,
 }
 
 impl SingleDownloader {
@@ -596,6 +610,7 @@ impl SingleDownloader {
         app_sender: Sender<AppAggMessage>,
         is_downloading_paused: bool,
         reverse_connection: Option<EncryptedStream>,
+        refresh_data: Arc<Mutex<HashMap<String, InternalRefreshData>>>,
     ) -> SingleDownloader {
         let download_queue = VecDeque::new();
         let progress_current_time = Instant::now();
@@ -618,6 +633,7 @@ impl SingleDownloader {
             shutdown: false,
             progress_current_time,
             reverse_connection,
+            refresh_data,
         }
     }
 
@@ -735,11 +751,19 @@ impl SingleDownloader {
             //print_shared_files(&everything_file, "");
 
             // TODO REVERSE send everything file to be file listing in Shared With Me
+            let internal_refresh = InternalRefreshData {
+                data: Ok(everything_file.clone()),
+                recv: None,
+            };
+            let mut refresh_guard = self.refresh_data.lock().unwrap();
+            refresh_guard.insert(self.shared_user.nickname.clone(), internal_refresh);
+            drop(refresh_guard);
 
             loop {
                 let path_active_download = match self.download_queue.get(0) {
                     Some(path_active_download) => path_active_download.clone(),
                     None => {
+                        // TODO shutdown encrypted stream?
                         break;
                     }
                 };
@@ -1096,13 +1120,16 @@ impl SingleDownloader {
 
     fn initialize_download_queue(&mut self) -> Result<(), Box<dyn Error>> {
         self.download_queue.clear();
-        let contents = fs::read_to_string(&self.path_queue_file)?;
-
-        for mut line in contents.lines() {
-            line = line.trim();
-            if !line.is_empty() {
-                self.download_queue.push_back(line.to_string());
+        match fs::read_to_string(&self.path_queue_file) {
+            Ok(contents) => {
+                for mut line in contents.lines() {
+                    line = line.trim();
+                    if !line.is_empty() {
+                        self.download_queue.push_back(line.to_string());
+                    }
+                }
             }
+            Err(e) => {}
         }
 
         Ok(())
