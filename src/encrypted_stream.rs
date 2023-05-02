@@ -160,7 +160,6 @@ impl EncryptedStream {
         if self.is_crc_payload(message) {
             let checksum = crc32fast::hash(payload);
             let checksum_bytes = checksum.to_be_bytes();
-            println!("{:?}", checksum);
             self.buffer[PAYLOAD_OFFSET + payload_size..PAYLOAD_OFFSET + payload_size + CRC_SIZE]
                 .copy_from_slice(&checksum_bytes);
         }

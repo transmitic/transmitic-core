@@ -1,5 +1,4 @@
 use core::time;
-use std::any::Any;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::OpenOptions;
@@ -191,13 +190,35 @@ impl UploaderManager {
             // Outgoing ^
             // Cannot know incoming port, therefore my Rev could collide (or be unknownable) of an incoming
             if self.config.is_reverse_connection() {
-                self.app_sender
-                    .send(AppAggMessage::LogInfo(format!("REVERSE STARTING")))?;
-                loop {
-                    self.read_receiver();
-                    if self.stop_incoming {
-                        break;
+                self.app_sender.send(AppAggMessage::LogInfo(
+                    "Reverse Connections Starting".to_string(),
+                ))?;
+
+                let mut sleep = 1;
+                let max_sleep = 1800;
+
+                'outer: loop {
+                    // Sleep and retry
+                    self.app_sender
+                        .send(AppAggMessage::LogInfo(format!("Reverse sleep {}", sleep)))?;
+                    let mut loop_counter = 1;
+                    loop {
+                        self.read_receiver();
+                        if self.stop_incoming {
+                            break 'outer;
+                        }
+
+                        if loop_counter >= sleep {
+                            break;
+                        }
+                        loop_counter += 1;
+                        thread::sleep(time::Duration::from_secs(1));
                     }
+                    sleep *= 3;
+                    if sleep > max_sleep {
+                        sleep = max_sleep;
+                    }
+
                     self.remove_dead_uploaders();
 
                     for shared_user in self.config.get_shared_users() {
@@ -205,8 +226,8 @@ impl UploaderManager {
                         if self.single_uploaders_rev.contains_key(&nickname) {
                             continue;
                         }
-                        self.app_sender.send(AppAggMessage::LogInfo(format!(
-                            "REVERSE INSERT {}",
+                        self.app_sender.send(AppAggMessage::LogDebug(format!(
+                            "Reverse Start {}",
                             &nickname
                         )))?;
                         let (sx, rx): (
@@ -225,11 +246,21 @@ impl UploaderManager {
                             let remote_address = format!("{}:{}", shared_user.ip, shared_user.port);
                             let remote_socket_address: SocketAddr = remote_address.parse().unwrap(); // TODO unwrap
 
-                            let stream = TcpStream::connect_timeout(
+                            let stream = match TcpStream::connect_timeout(
                                 &remote_socket_address,
                                 time::Duration::from_secs(2),
-                            )
-                            .unwrap(); // TODO unwrap
+                            ) {
+                                Ok(stream) => stream,
+                                Err(_) => {
+                                    thread_app_sender
+                                        .send(AppAggMessage::LogDebug(format!(
+                                            "Reverse offline {}",
+                                            shared_user.nickname,
+                                        )))
+                                        .ok();
+                                    return;
+                                }
+                            };
 
                             let ip = match stream.peer_addr() {
                                 Ok(addr) => addr.to_string(),
@@ -274,9 +305,6 @@ impl UploaderManager {
                                 }
                             }
                         }); // end thread
-                    }
-                    loop {
-                        thread::sleep(time::Duration::from_secs(1));
                     }
                 }
             } else {

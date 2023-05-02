@@ -5,7 +5,7 @@ use crate::{
     },
     config,
     core_consts::{MSG_FILE_CHUNK, MSG_FILE_FINISHED, MSG_FILE_SELECTION_CONTINUE},
-    encrypted_stream::{self, EncryptedStream},
+    encrypted_stream::EncryptedStream,
     shared_file::{remove_invalid_files, RefreshData, SelectedDownload, SharedFile},
     utils::get_file_by_path,
 };
@@ -15,7 +15,6 @@ use std::{
     error::Error,
     fs::{self, metadata, File, OpenOptions},
     io::{ErrorKind, Seek, SeekFrom, Write},
-    mem,
     net::{SocketAddr, TcpStream},
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
@@ -167,17 +166,13 @@ impl OutgoingDownloader {
             }
         }
 
-        match self.channel_map.get(&user.nickname) {
-            Some((_, rev_sx)) => match reverse_connection.take() {
-                Some(enc) => {
-                    rev_sx
-                        .send(MessageRevSingleDownloader::NewConnection(enc))
-                        .ok();
-                    return;
-                }
-                None => {}
-            },
-            None => {}
+        if let Some((_, rev_sx)) = self.channel_map.get(&user.nickname) {
+            if let Some(enc) = reverse_connection.take() {
+                rev_sx
+                    .send(MessageRevSingleDownloader::NewConnection(enc))
+                    .ok();
+                return;
+            }
         }
 
         let (sx, rx): (
@@ -224,7 +219,6 @@ impl OutgoingDownloader {
                                     e
                                 )))
                                 .unwrap();
-                            std::process::exit(10); // TODO remove
                             if e.to_string().starts_with(ERR_REMOTE_ID_MISMATCH) {
                                 thread_app_sender
                                     .send(AppAggMessage::OfflineError(OfflineErrorMessage {
@@ -600,6 +594,7 @@ struct SingleDownloader {
     refresh_data: Arc<Mutex<HashMap<String, InternalRefreshData>>>,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl SingleDownloader {
     pub fn new(
         receiver: Receiver<MessageSingleDownloader>,
@@ -1120,16 +1115,13 @@ impl SingleDownloader {
 
     fn initialize_download_queue(&mut self) -> Result<(), Box<dyn Error>> {
         self.download_queue.clear();
-        match fs::read_to_string(&self.path_queue_file) {
-            Ok(contents) => {
-                for mut line in contents.lines() {
-                    line = line.trim();
-                    if !line.is_empty() {
-                        self.download_queue.push_back(line.to_string());
-                    }
+        if let Ok(contents) = fs::read_to_string(&self.path_queue_file) {
+            for mut line in contents.lines() {
+                line = line.trim();
+                if !line.is_empty() {
+                    self.download_queue.push_back(line.to_string());
                 }
             }
-            Err(e) => {}
         }
 
         Ok(())

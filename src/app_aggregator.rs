@@ -1,10 +1,10 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex, RwLock};
 
-use std::{thread, time};
+use std::thread;
 
-use crate::encrypted_stream::{self, EncryptedStream};
+use crate::encrypted_stream::EncryptedStream;
 use crate::incoming_uploader::IncomingUploaderError;
 use crate::logger::{LogLevel, Logger};
 use crate::outgoing_downloader::OutgoingDownloader;
@@ -46,6 +46,8 @@ pub struct OfflineErrorMessage {
     pub error: String,
 }
 
+// TODO fix
+#[allow(clippy::large_enum_variant)]
 pub enum AppAggMessage {
     LogDebug(String),
     LogInfo(String),
