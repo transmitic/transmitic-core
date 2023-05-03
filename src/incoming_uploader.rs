@@ -171,24 +171,6 @@ impl UploaderManager {
                 }
             }
 
-            write!(ip_address, ":{}", self.config.get_sharing_port()).unwrap();
-            self.app_sender.send(AppAggMessage::LogInfo(format!(
-                "Waiting for incoming uploads on {}",
-                ip_address
-            )))?;
-
-            // single_uploaders should save (ip:port, sx)
-            // If reverse connection:
-            //  if SharedUser not in single_uploaders:
-            //      start reverse connection
-            // ? Should reverse connection disable all incoming?
-            // what if rev starts a rev-incoming, and there's a true-incoming waiting
-            //  i can't distinguish/know/trust the true-incoming port though?
-
-            // UserOne - 192.168.0.1:7878
-            // UserTwo - 192.168.0.1:8080
-            // Outgoing ^
-            // Cannot know incoming port, therefore my Rev could collide (or be unknownable) of an incoming
             if self.config.is_reverse_connection() {
                 self.app_sender.send(AppAggMessage::LogInfo(
                     "Reverse Connections Starting".to_string(),
@@ -196,6 +178,7 @@ impl UploaderManager {
 
                 let mut sleep = 1;
                 let max_sleep = 1800;
+                let max_sleep = 20; // TODO remove
 
                 'outer: loop {
                     // Sleep and retry
@@ -230,12 +213,12 @@ impl UploaderManager {
                             "Reverse Start {}",
                             &nickname
                         )))?;
+
                         let (sx, rx): (
                             Sender<MessageSingleUploader>,
                             Receiver<MessageSingleUploader>,
                         ) = mpsc::channel();
 
-                        //self.remove_dead_uploaders();
                         self.single_uploaders_rev.insert(nickname, sx);
 
                         let single_config = self.config.clone();
@@ -262,52 +245,23 @@ impl UploaderManager {
                                 }
                             };
 
-                            let ip = match stream.peer_addr() {
-                                Ok(addr) => addr.to_string(),
-                                Err(_) => "Unknown IP".to_string(),
-                            };
-                            let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                                let mut single_uploader =
-                                    SingleUploader::new(rx, single_config, app_sender_clone);
-                                match single_uploader.run(&stream, Some(shared_user)) {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        thread_app_sender
-                                            .send(AppAggMessage::LogDebug(format!(
-                                                "Uploader run error. {} - {}",
-                                                ip, e
-                                            )))
-                                            .unwrap();
-                                        // Mid download. Upload is now disconnected.
-                                        if single_uploader.active_msg == MSG_FILE_SELECTION_CONTINUE
-                                        {
-                                            thread_app_sender
-                                                .send(AppAggMessage::UploadDisconnected(
-                                                    single_uploader.nickname,
-                                                ))
-                                                .unwrap();
-                                        }
-                                    }
-                                }
-                            }));
-
-                            stream.shutdown(Shutdown::Both).ok();
-
-                            match result {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    thread_app_sender
-                                        .send(AppAggMessage::LogDebug(format!(
-                                            "Uploader thread error. {} - {:?}",
-                                            ip, e
-                                        )))
-                                        .unwrap();
-                                }
-                            }
+                            single_thread(
+                                stream,
+                                Some(shared_user),
+                                rx,
+                                single_config,
+                                thread_app_sender,
+                            )
                         }); // end thread
                     }
                 }
             } else {
+                write!(ip_address, ":{}", self.config.get_sharing_port()).unwrap();
+                self.app_sender.send(AppAggMessage::LogInfo(format!(
+                    "Waiting for incoming uploads on {}",
+                    ip_address
+                )))?;
+
                 let listener = TcpListener::bind(ip_address)?;
                 listener.set_nonblocking(true)?;
 
@@ -330,59 +284,8 @@ impl UploaderManager {
                             let app_sender_clone = self.app_sender.clone();
                             thread::spawn(move || {
                                 let thread_app_sender = app_sender_clone.clone();
-                                let ip = match stream.peer_addr() {
-                                    Ok(addr) => addr.to_string(),
-                                    Err(_) => "Unknown IP".to_string(),
-                                };
-                                // Box<dyn Any + Send>>
-                                let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                                    let mut single_uploader =
-                                        SingleUploader::new(rx, single_config, app_sender_clone);
-                                    match single_uploader.run(&stream, None) {
-                                        Ok(res) => res,
-                                        Err(e) => {
-                                            thread_app_sender
-                                                .send(AppAggMessage::LogDebug(format!(
-                                                    "Uploader run error. {} - {}",
-                                                    ip, e
-                                                )))
-                                                .unwrap();
-                                            // Mid download. Upload is now disconnected.
-                                            if single_uploader.active_msg
-                                                == MSG_FILE_SELECTION_CONTINUE
-                                            {
-                                                thread_app_sender
-                                                    .send(AppAggMessage::UploadDisconnected(
-                                                        single_uploader.nickname,
-                                                    ))
-                                                    .unwrap();
-                                            }
-                                            RunLoopResult::Success
-                                        }
-                                    }
-                                }));
-
-                                // TODO this shutdown will shutdown the reverse connection?
-                                //stream.shutdown(Shutdown::Both).ok();
-
-                                match result {
-                                    Ok(res) => match res {
-                                        RunLoopResult::Success => {
-                                            stream.shutdown(Shutdown::Both).ok();
-                                        }
-                                        RunLoopResult::ReverseConnection => {}
-                                    },
-                                    Err(e) => {
-                                        thread_app_sender
-                                            .send(AppAggMessage::LogDebug(format!(
-                                                "Uploader thread error. {} - {:?}",
-                                                ip, e
-                                            )))
-                                            .unwrap();
-                                        stream.shutdown(Shutdown::Both).ok();
-                                    }
-                                }
-                            });
+                                single_thread(stream, None, rx, single_config, thread_app_sender)
+                            }); // end thread
                         }
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                             thread::sleep(time::Duration::from_secs(1));
@@ -442,6 +345,58 @@ impl UploaderManager {
 
         self.single_uploaders_rev
             .retain(|_, uploader| uploader.send(message.clone()).is_ok());
+    }
+}
+
+fn single_thread(
+    stream: TcpStream,
+    reverse_user: Option<SharedUser>,
+    rx: Receiver<MessageSingleUploader>,
+    single_config: Config,
+    thread_app_sender: Sender<AppAggMessage>,
+) {
+    let ip = match stream.peer_addr() {
+        Ok(addr) => addr.to_string(),
+        Err(_) => "Unknown IP".to_string(),
+    };
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut single_uploader = SingleUploader::new(rx, single_config, thread_app_sender.clone());
+        match single_uploader.run(&stream, reverse_user) {
+            Ok(res) => res,
+            Err(e) => {
+                thread_app_sender
+                    .send(AppAggMessage::LogDebug(format!(
+                        "Uploader run error. {} - {}",
+                        ip, e
+                    )))
+                    .unwrap();
+                // Mid download. Upload is now disconnected.
+                if single_uploader.active_msg == MSG_FILE_SELECTION_CONTINUE {
+                    thread_app_sender
+                        .send(AppAggMessage::UploadDisconnected(single_uploader.nickname))
+                        .unwrap();
+                }
+                RunLoopResult::Success
+            }
+        }
+    }));
+
+    match result {
+        Ok(res) => match res {
+            RunLoopResult::Success => {
+                stream.shutdown(Shutdown::Both).ok();
+            }
+            RunLoopResult::ReverseConnection => {}
+        },
+        Err(e) => {
+            thread_app_sender
+                .send(AppAggMessage::LogDebug(format!(
+                    "Uploader thread error. {} - {:?}",
+                    ip, e
+                )))
+                .unwrap();
+            stream.shutdown(Shutdown::Both).ok();
+        }
     }
 }
 
