@@ -94,6 +94,7 @@ pub enum ExitCodes {
     AppLoopRecFailed = 2,
     AppFailedKill = 3,
     RevConnOutgoingLock = 4,
+    EncStreamNoUser = 5,
 }
 
 #[allow(clippy::field_reassign_with_default)]

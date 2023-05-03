@@ -9,6 +9,7 @@ use ring::signature;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::{
+    app_aggregator::ExitCodes,
     config::SharedUser,
     core_consts::{TRAN_API_MAJOR, TRAN_API_MINOR, TRAN_MAGIC_NUMBER},
     crypto,
@@ -82,7 +83,7 @@ impl TransmiticStream {
             Some(shared_user) => shared_user.to_owned(),
             None => {
                 eprintln!("SharedUser not matched for encryption stream");
-                std::process::exit(1);
+                std::process::exit(ExitCodes::EncStreamNoUser as i32);
             }
         };
         let encrypted_stream = EncryptedStream::new(
