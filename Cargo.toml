@@ -11,8 +11,8 @@ path = "src/lib.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = { version = "1.0.155", features = ["derive", "rc"] }
-serde_json = "1.0.94"
+serde = { version = "1.0.162", features = ["derive", "rc"] }
+serde_json = "1.0.96"
 rand = "0.8.5"
 rand_core = "0.5.1"
 aes-gcm = { version = "0.10.1", features = ["heapless"]}

@@ -1,7 +1,7 @@
 // TODO update ! after beta to N
 // TODO upgrade TRAN API MAJOR TO u16
 pub const TRAN_MAGIC_NUMBER: [u8; 4] = [b'T', b'R', b'A', b'!'];
-pub const TRAN_API_MAJOR: u8 = 4; // TODO upgrade TRAN API MAJOR TO u16
+pub const TRAN_API_MAJOR: u8 = 5; // TODO upgrade TRAN API MAJOR TO u16
 pub const TRAN_API_MINOR: u16 = 0;
 
 // TODO REORG all
