@@ -37,6 +37,12 @@ const ERR_REC_DISCONNECTED: &str = "Uploader receiver disconnected";
 pub const ERR_REMOTE_ID_MISMATCH: &str = "PublicID for user is rejected.";
 pub const ERR_REMOTE_ID_NOT_FOUND: &str = "Could not find matching PublicID. User unknown.";
 
+#[cfg(debug_assertions)]
+const MAX_RETRY_SLEEP: u64 = 5;
+
+#[cfg(not(debug_assertions))]
+const MAX_RETRY_SLEEP: u64 = 30;
+
 struct InternalRefreshData {
     pub error: Option<String>,
     pub data: Option<SharedFile>,
@@ -673,6 +679,8 @@ impl SingleDownloader {
 
         // TODO the inner loop logic in a function that will loop and handle errors to prevent the outer thread loop from restarting the above code?
         // TODO add a Stream shutdown at end of loop?
+
+        let mut sleep_secs = 5;
         loop {
             self.read_receiver()?;
 
@@ -719,7 +727,14 @@ impl SingleDownloader {
                         Ok(stream) => stream,
                         Err(_) => {
                             self.app_update_offline()?;
-                            thread::sleep(time::Duration::from_secs(5)); // TODO backoff?
+                            thread::sleep(time::Duration::from_secs(sleep_secs));
+                            // TODO sleep should work for the entire thread and where we call .run()
+                            // Build a method, .sleep()?
+                            //  Respond to read receiver too
+                            sleep_secs += 5;
+                            if sleep_secs > MAX_RETRY_SLEEP {
+                                sleep_secs = MAX_RETRY_SLEEP;
+                            }
                             continue;
                         }
                     };
@@ -734,6 +749,7 @@ impl SingleDownloader {
                     transmitic_stream.connect()?
                 }
             };
+            sleep_secs = 5;
 
             // request file list
             encrypted_stream.write(MSG_FILE_LIST, &Vec::new())?;
