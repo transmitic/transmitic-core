@@ -1,7 +1,7 @@
 // TODO update ! after beta to N
 // TODO upgrade TRAN API MAJOR TO u16
 pub const TRAN_MAGIC_NUMBER: [u8; 4] = [b'T', b'R', b'A', b'!'];
-pub const TRAN_API_MAJOR: u8 = 5; // TODO upgrade TRAN API MAJOR TO u16
+pub const TRAN_API_MAJOR: u8 = 6; // TODO upgrade TRAN API MAJOR TO u16
 pub const TRAN_API_MINOR: u16 = 0;
 
 // TODO REORG all
@@ -31,8 +31,9 @@ pub const CRC_MESSAGES: [u16; 4] = [
 
 pub const MAX_DATA_SIZE: usize = 100_000;
 
+pub const CRYPTO_EXTENSION_SIZE: usize = 16;
 pub const TOTAL_BUFFER_SIZE: usize = MSG_TYPE_SIZE + PAYLOAD_SIZE_LEN + MAX_DATA_SIZE + CRC_SIZE;
-pub const TOTAL_CRYPTO_BUFFER_SIZE: usize = TOTAL_BUFFER_SIZE + 16;
+pub const TOTAL_CRYPTO_BUFFER_SIZE: usize = TOTAL_BUFFER_SIZE + CRYPTO_EXTENSION_SIZE;
 pub const PAYLOAD_OFFSET: usize = MSG_TYPE_SIZE + PAYLOAD_SIZE_LEN;
 
 #[cfg(debug_assertions)]
