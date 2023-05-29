@@ -97,7 +97,7 @@ impl TransmiticStream {
     }
 
     fn send_transmitic_header(&mut self) -> Result<(), Box<dyn Error>> {
-        let mut buffer: [u8; 8] = [0; TRAN_MAGIC_NUMBER.len() + 2 + 2];
+        let mut buffer = self.get_header_buffer();
         buffer[0..4].copy_from_slice(&TRAN_MAGIC_NUMBER);
         buffer[4..6].copy_from_slice(&TRAN_API_MAJOR.to_be_bytes());
         buffer[6..8].copy_from_slice(&TRAN_API_MINOR.to_be_bytes());
@@ -106,7 +106,7 @@ impl TransmiticStream {
     }
 
     fn receive_transmitic_header(&mut self) -> Result<(), Box<dyn Error>> {
-        let mut buffer: [u8; 8] = [0; TRAN_MAGIC_NUMBER.len() + 2 + 2];
+        let mut buffer = self.get_header_buffer();
         // TODO set read timeout
         self.stream.read_exact(&mut buffer)?;
 
@@ -129,6 +129,11 @@ impl TransmiticStream {
         }
 
         Ok(())
+    }
+
+    fn get_header_buffer(&self) -> [u8; 8] {
+        let buffer: [u8; 8] = [0; TRAN_MAGIC_NUMBER.len() + 2 + 2];
+        buffer
     }
 
     fn send_diffie_helman_key(&mut self) -> Result<EphemeralSecret, Box<dyn Error>> {
