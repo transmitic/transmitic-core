@@ -97,16 +97,16 @@ impl TransmiticStream {
     }
 
     fn send_transmitic_header(&mut self) -> Result<(), Box<dyn Error>> {
-        let mut buffer: [u8; 7] = [0; TRAN_MAGIC_NUMBER.len() + 1 + 2];
+        let mut buffer: [u8; 8] = [0; TRAN_MAGIC_NUMBER.len() + 2 + 2];
         buffer[0..4].copy_from_slice(&TRAN_MAGIC_NUMBER);
-        buffer[4] = TRAN_API_MAJOR;
-        buffer[5..7].copy_from_slice(&TRAN_API_MINOR.to_be_bytes());
+        buffer[4..6].copy_from_slice(&TRAN_API_MAJOR.to_be_bytes());
+        buffer[6..8].copy_from_slice(&TRAN_API_MINOR.to_be_bytes());
         self.stream.write_all(&buffer)?;
         Ok(())
     }
 
     fn receive_transmitic_header(&mut self) -> Result<(), Box<dyn Error>> {
-        let mut buffer: [u8; 7] = [0; TRAN_MAGIC_NUMBER.len() + 1 + 2];
+        let mut buffer: [u8; 8] = [0; TRAN_MAGIC_NUMBER.len() + 2 + 2];
         // TODO set read timeout
         self.stream.read_exact(&mut buffer)?;
 
@@ -119,10 +119,11 @@ impl TransmiticStream {
             .into());
         }
 
-        if buffer[4] != TRAN_API_MAJOR {
+        let api_major: u16 = u16::from_be_bytes(buffer[4..6].try_into().unwrap());
+        if api_major != TRAN_API_MAJOR {
             return Err(format!(
-                "{} TRAN API MAJOR mismatch. {}",
-                self.connecting_ip, &buffer[4]
+                "{} TRAN API MAJOR mismatch. {:?}",
+                self.connecting_ip, &api_major
             )
             .into());
         }
