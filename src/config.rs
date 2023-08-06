@@ -68,10 +68,16 @@ struct ConfigFile {
     ignore_incoming: bool,
     #[serde(default = "default_false")]
     reverse_connection: bool,
+    #[serde(default = "default_empty_string")]
+    path_downloads: String,
 }
 
 fn default_false() -> bool {
     false
+}
+
+fn default_empty_string() -> String {
+    String::new()
 }
 
 #[derive(Clone)]
@@ -302,6 +308,28 @@ impl Config {
         self.path_dir_config.clone()
     }
 
+    pub fn get_path_downloads_dir(&self) -> Result<String, std::io::Error> {
+        // TODO Return Buf and add a pretty string method?
+        let mut path = self.config_file.path_downloads.clone();
+        if path.is_empty() {
+            let mut default_path = env::current_exe()?;
+            default_path.pop();
+            default_path.push("Transmitic Downloads");
+            path = default_path.to_str().unwrap().to_string();
+
+            let start_sub = "\\\\?\\";
+            if path.starts_with(start_sub) {
+                path = path[start_sub.len()..].to_string();
+            }
+        }
+
+        if !path.ends_with(std::path::MAIN_SEPARATOR_STR) {
+            path.push_str(std::path::MAIN_SEPARATOR_STR);
+        }
+
+        Ok(path)
+    }
+
     pub fn get_public_id_string(&self) -> String {
         let local_key_pair = self.get_local_key_pair();
         let public_id = local_key_pair.public_key().as_ref();
@@ -377,6 +405,14 @@ impl Config {
     pub fn set_port(&mut self, port: String) -> Result<(), Box<dyn Error>> {
         let mut new_config_file = self.config_file.clone();
         new_config_file.sharing_port = port;
+        self.write_and_set_config(&mut new_config_file)?;
+
+        Ok(())
+    }
+
+    pub fn set_path_downloads_dir(&mut self, path: String) -> Result<(), Box<dyn Error>> {
+        let mut new_config_file = self.config_file.clone();
+        new_config_file.path_downloads = path;
         self.write_and_set_config(&mut new_config_file)?;
 
         Ok(())
@@ -477,13 +513,6 @@ fn get_path_transmitic_config_dir() -> Result<PathBuf, std::io::Error> {
     Ok(path)
 }
 
-pub fn get_path_dir_downloads() -> Result<PathBuf, std::io::Error> {
-    let mut path = env::current_exe()?;
-    path.pop();
-    path.push("Transmitic Downloads");
-    Ok(path)
-}
-
 fn get_expected_config_path(encrypted: bool) -> Result<PathBuf, std::io::Error> {
     if encrypted {
         get_path_encrypted_config()
@@ -521,6 +550,7 @@ fn create_new_config(
         sharing_port: "45454".to_string(),
         ignore_incoming: false,
         reverse_connection: false,
+        path_downloads: "".to_string(),
     };
 
     write_config(
@@ -627,6 +657,7 @@ fn sanitize_config(config_file: &mut ConfigFile) {
     // trim
     config_file.my_private_id = config_file.my_private_id.trim().to_string();
     config_file.sharing_port = config_file.sharing_port.trim().to_string();
+    config_file.path_downloads = config_file.path_downloads.trim().to_string();
 
     // Sort shared users by nickname
     config_file.shared_users.sort_by_key(|x| x.nickname.clone());

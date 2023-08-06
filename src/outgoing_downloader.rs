@@ -3,7 +3,6 @@ use crate::{
         AppAggMessage, CompletedMessage, InProgressMessage, InvalidFileMessage,
         OfflineErrorMessage, OfflineMessage,
     },
-    config,
     core_consts::{MSG_FILE_CHUNK, MSG_FILE_FINISHED, MSG_FILE_SELECTION_CONTINUE},
     encrypted_stream::EncryptedStream,
     shared_file::{remove_invalid_files, RefreshData, SelectedDownload, SharedFile},
@@ -100,7 +99,7 @@ impl OutgoingDownloader {
         config: Config,
         app_sender: Sender<AppAggMessage>,
     ) -> Result<OutgoingDownloader, Box<dyn Error>> {
-        create_downloads_dir()?;
+        create_downloads_dir(&config)?;
         let channel_map = HashMap::with_capacity(10);
         let mut refresh_data_map = HashMap::with_capacity(10);
         set_refresh_data(&config, &mut refresh_data_map);
@@ -194,6 +193,7 @@ impl OutgoingDownloader {
         ) = mpsc::channel();
         self.channel_map.insert(user.nickname.clone(), (sx, rev_sx));
         let refresh_data_clone = self.refresh_data.clone();
+        let config_clone = self.config.clone();
 
         thread::spawn(move || {
             let thread_app_sender = app_sender_clone.clone();
@@ -208,6 +208,7 @@ impl OutgoingDownloader {
                 is_downloading_paused,
                 reverse_connection,
                 refresh_data_clone,
+                config_clone,
             );
 
             let mut continue_run = true;
@@ -264,12 +265,14 @@ impl OutgoingDownloader {
     }
 
     pub fn set_new_config(&mut self, config: Config) {
-        self.config = config;
+        self.config = config.clone();
+        self.send_message_to_all_downloads(MessageSingleDownloader::NewConfig(config));
 
         let mut refresh_guard = self.refresh_data.lock().unwrap();
         set_refresh_data(&self.config, &mut refresh_guard);
     }
 
+    // TODO set_new_config replaces it?
     pub fn set_new_private_id(&mut self, private_id_bytes: Vec<u8>) {
         self.send_message_to_all_downloads(MessageSingleDownloader::NewPrivateId(private_id_bytes));
     }
@@ -560,20 +563,24 @@ fn refresh_single_user(
     Ok(everything_file)
 }
 
-fn create_downloads_dir() -> Result<(), std::io::Error> {
-    let path = config::get_path_dir_downloads()?;
+fn create_downloads_dir(config: &Config) -> Result<(), std::io::Error> {
+    let path = config.get_path_downloads_dir()?;
     fs::create_dir_all(path)?;
     Ok(())
 }
 
-fn get_path_downloads_dir_user(user: &str) -> Result<PathBuf, std::io::Error> {
-    let mut path = config::get_path_dir_downloads()?;
-    path.push(user);
+fn get_path_downloads_dir_user(user: &str, config: &Config) -> Result<PathBuf, std::io::Error> {
+    // TOOD update
+    let mut path: String = config.get_path_downloads_dir()?;
+    path.push_str(user);
+
+    let path = PathBuf::from(path);
     Ok(path)
 }
 
 #[derive(Clone)]
 enum MessageSingleDownloader {
+    NewConfig(Config),
     NewSharedUser(SharedUser),
     NewPrivateId(Vec<u8>),
     NewDownload(String),
@@ -608,6 +615,7 @@ struct SingleDownloader {
     progress_current_time: Instant,
     reverse_connection: Option<EncryptedStream>,
     refresh_data: Arc<Mutex<HashMap<String, InternalRefreshData>>>,
+    config: Config,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -615,13 +623,14 @@ impl SingleDownloader {
     pub fn new(
         receiver: Receiver<MessageSingleDownloader>,
         rev_receiver: Receiver<MessageRevSingleDownloader>,
-        private_id_bytes: Vec<u8>,
+        private_id_bytes: Vec<u8>, // TODO get from Config instead?
         shared_user: SharedUser,
         path_queue_file: PathBuf,
         app_sender: Sender<AppAggMessage>,
         is_downloading_paused: bool,
         reverse_connection: Option<EncryptedStream>,
         refresh_data: Arc<Mutex<HashMap<String, InternalRefreshData>>>,
+        config: Config,
     ) -> SingleDownloader {
         let download_queue = VecDeque::new();
         let progress_current_time = Instant::now();
@@ -645,6 +654,7 @@ impl SingleDownloader {
             progress_current_time,
             reverse_connection,
             refresh_data,
+            config,
         }
     }
 
@@ -668,14 +678,6 @@ impl SingleDownloader {
         )))?;
         self.initialize_download_queue()?;
         self.app_update_offline()?;
-
-        let root_download_dir = get_path_downloads_dir_user(&self.shared_user.nickname)?;
-        let mut root_download_dir = root_download_dir
-            .into_os_string()
-            .to_str()
-            .unwrap()
-            .to_string();
-        root_download_dir.push(path::MAIN_SEPARATOR);
 
         // TODO the inner loop logic in a function that will loop and handle errors to prevent the outer thread loop from restarting the above code?
         // TODO add a Stream shutdown at end of loop?
@@ -704,6 +706,15 @@ impl SingleDownloader {
             // TODO add backoff
 
             // ------ DOWNLOAD FROM QUEUE
+
+            let root_download_dir =
+                get_path_downloads_dir_user(&self.shared_user.nickname, &self.config)?;
+            let mut root_download_dir = root_download_dir
+                .into_os_string()
+                .to_str()
+                .unwrap()
+                .to_string();
+            root_download_dir.push(path::MAIN_SEPARATOR);
 
             let mut encrypted_stream = match self.reverse_connection.take() {
                 Some(enc) => enc,
@@ -980,6 +991,7 @@ impl SingleDownloader {
 
             match self.receiver.try_recv() {
                 Ok(value) => match value {
+                    // TODO delete? grab from config?
                     MessageSingleDownloader::NewPrivateId(private_id_bytes) => {
                         self.stop_downloading = true;
                         self.private_id_bytes = private_id_bytes;
@@ -1069,6 +1081,15 @@ impl SingleDownloader {
 
                         self.app_sender.send(AppAggMessage::LogDebug(format!(
                             "Restart Downloader {}",
+                            self.shared_user.nickname.clone()
+                        )))?;
+                    }
+                    MessageSingleDownloader::NewConfig(config) => {
+                        self.stop_downloading = true;
+                        self.config = config;
+
+                        self.app_sender.send(AppAggMessage::LogDebug(format!(
+                            "Downloader update config {}",
                             self.shared_user.nickname.clone()
                         )))?;
                     }

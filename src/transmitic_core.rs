@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     error::Error,
+    fs,
     path::PathBuf,
     sync::{
         mpsc::{self, Receiver, Sender},
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app_aggregator::{run_app_loop, AppAggMessage, CompletedMessage},
-    config::{self, Config, ConfigSharedFile, SharedUser},
+    config::{Config, ConfigSharedFile, SharedUser},
     incoming_uploader::{IncomingUploader, IncomingUploaderError, SharingState},
     logger::{LogLevel, Logger, DEFAULT_LOG_LEVEL, DEFAULT_LOG_TO_FILE},
     outgoing_downloader::OutgoingDownloader,
@@ -438,6 +439,19 @@ impl TransmiticCore {
         outgoing_guard.get_shared_with_me_data()
     }
 
+    pub fn get_path_downloads_dir(&self) -> Result<String, std::io::Error> {
+        self.config.get_path_downloads_dir()
+    }
+
+    pub fn set_path_downloads_dir(&mut self, path: String) -> Result<(), Box<dyn Error>> {
+        fs::create_dir_all(&path)?;
+        self.config.set_path_downloads_dir(path)?;
+        let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
+        outgoing_guard.set_new_config(self.config.clone());
+        outgoing_guard.restart_connections(); // TODO Redundant with set_new_config now?
+        Ok(())
+    }
+
     pub fn start_refresh_shared_with_me_all(&mut self) {
         let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
         outgoing_guard.start_refresh_shared_with_me_all();
@@ -584,6 +598,8 @@ impl TransmiticCore {
     }
 
     pub fn get_downloads_dir(&self) -> Result<PathBuf, std::io::Error> {
-        config::get_path_dir_downloads()
+        let path = self.config.get_path_downloads_dir()?;
+        let path = PathBuf::from(path);
+        Ok(path)
     }
 }
