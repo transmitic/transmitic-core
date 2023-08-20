@@ -139,6 +139,16 @@ impl TransmiticCore {
             config.get_path_dir_config().as_os_str()
         )))?;
 
+        app_sender.send(AppAggMessage::LogCritical(format!(
+            "Is Transmitic installed: {}",
+            crate::config::is_transmitic_installed()?
+        )))?;
+
+        app_sender.send(AppAggMessage::LogCritical(format!(
+            "Downloads dir: {}",
+            config.get_path_downloads_dir()?
+        )))?;
+
         let incoming_uploader = IncomingUploader::new(config.clone(), app_sender.clone());
 
         Ok(TransmiticCore {

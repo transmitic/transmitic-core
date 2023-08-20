@@ -308,12 +308,39 @@ impl Config {
         self.path_dir_config.clone()
     }
 
+    fn get_users_downloads_dir(&self) -> Result<PathBuf, std::io::Error> {
+        let mut key = "HOME";
+        if cfg!(windows) {
+            key = "USERPROFILE";
+        }
+
+        match env::var(key) {
+            Ok(path) => {
+                let mut path = PathBuf::from(path);
+                path.push("Downloads");
+                Ok(path)
+            }
+            Err(_) => {
+                println!("ERROR: Could not find user download dir: {}", key);
+                let mut default_path = env::current_exe()?;
+                default_path.pop();
+                Ok(default_path)
+            }
+        }
+    }
+
     pub fn get_path_downloads_dir(&self) -> Result<String, std::io::Error> {
         // TODO Return Buf and add a pretty string method?
         let mut path = self.config_file.path_downloads.clone();
         if path.is_empty() {
-            let mut default_path = env::current_exe()?;
-            default_path.pop();
+            let mut default_path;
+            if is_transmitic_installed()? {
+                default_path = self.get_users_downloads_dir()?;
+            } else {
+                default_path = env::current_exe()?;
+                default_path.pop();
+            }
+
             default_path.push("Transmitic Downloads");
             path = default_path.to_str().unwrap().to_string();
 
@@ -500,6 +527,17 @@ impl Config {
     }
 }
 
+pub fn is_transmitic_installed() -> Result<bool, std::io::Error> {
+    if cfg!(windows) || cfg!(target_os = "macos") {
+        let mut path = env::current_exe()?;
+        path.pop();
+        path.push("transmitic_installed.json");
+
+        return Ok(path.exists());
+    }
+    Ok(false)
+}
+
 pub fn create_config_dir() -> Result<(), std::io::Error> {
     let path = get_path_transmitic_config_dir()?;
     fs::create_dir_all(path)?;
@@ -507,8 +545,16 @@ pub fn create_config_dir() -> Result<(), std::io::Error> {
 }
 
 fn get_path_transmitic_config_dir() -> Result<PathBuf, std::io::Error> {
-    let mut path = env::current_exe()?;
-    path.pop();
+    let mut path;
+    if cfg!(target_os = "macos") && is_transmitic_installed()? {
+        path = PathBuf::from(env::var("HOME").unwrap());
+        path.push("Library");
+        path.push("Application Support");
+        path.push("Transmitic");
+    } else {
+        path = env::current_exe()?;
+        path.pop();
+    }
     path.push("transmitic_config");
     Ok(path)
 }
