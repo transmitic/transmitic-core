@@ -544,7 +544,7 @@ pub fn create_config_dir() -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn get_path_transmitic_config_dir() -> Result<PathBuf, std::io::Error> {
+pub fn get_path_transmitic_config_dir() -> Result<PathBuf, std::io::Error> {
     let mut path;
     if cfg!(target_os = "macos") && is_transmitic_installed()? {
         path = PathBuf::from(env::var("HOME").unwrap());

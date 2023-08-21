@@ -1,11 +1,12 @@
 use std::{
     collections::VecDeque,
-    env,
     fs::{self, OpenOptions},
     io::Write,
     path::PathBuf,
     time::SystemTime,
 };
+
+use crate::config::get_path_transmitic_config_dir;
 
 pub static LOG_MESSAGES_COUNT: usize = 1000;
 static LOG_FILE_ROTATE_COUNT: usize = LOG_MESSAGES_COUNT * 2;
@@ -40,8 +41,7 @@ pub struct Logger {
 
 impl Logger {
     pub fn new(log_level: LogLevel, is_log_to_file: bool) -> Logger {
-        let mut log_path = env::current_exe().unwrap();
-        log_path.pop();
+        let mut log_path = get_path_transmitic_config_dir().unwrap();
         log_path.push("transmitic_log.txt");
         fs::remove_file(&log_path).ok();
 
@@ -92,10 +92,10 @@ impl Logger {
         // TODO duped strings with UI
         let log_string = match log_level {
             LogLevel::Critical => "[CRITICAL]",
-            LogLevel::Error =>    "[ERROR]   ",
-            LogLevel::Warning =>  "[WARNING] ",
-            LogLevel::Info =>     "[INFO]    ",
-            LogLevel::Debug =>    "[DEBUG]   ",
+            LogLevel::Error => "[ERROR]   ",
+            LogLevel::Warning => "[WARNING] ",
+            LogLevel::Info => "[INFO]    ",
+            LogLevel::Debug => "[DEBUG]   ",
         };
 
         let message = format!("{} {} |  {}", log_string, time_string, message);
