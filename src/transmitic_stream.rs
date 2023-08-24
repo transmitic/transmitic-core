@@ -137,7 +137,7 @@ impl TransmiticStream {
     }
 
     fn send_diffie_helman_key(&mut self) -> Result<EphemeralSecret, Box<dyn Error>> {
-        let local_diffie_secret = EphemeralSecret::new(OsRng);
+        let local_diffie_secret = EphemeralSecret::random_from_rng(OsRng);
         let local_diffie_public = PublicKey::from(&local_diffie_secret);
         let local_diffie_public_bytes: &[u8; 32] = local_diffie_public.as_bytes();
         let local_diffie_signature_public_bytes =
