@@ -201,7 +201,6 @@ impl OutgoingDownloader {
             let mut downloader = SingleDownloader::new(
                 rx,
                 rev_rx,
-                private_id_bytes,
                 user.clone(),
                 path_queue_file,
                 app_sender_clone,
@@ -270,11 +269,6 @@ impl OutgoingDownloader {
 
         let mut refresh_guard = self.refresh_data.lock().unwrap();
         set_refresh_data(&self.config, &mut refresh_guard);
-    }
-
-    // TODO set_new_config replaces it?
-    pub fn set_new_private_id(&mut self, private_id_bytes: Vec<u8>) {
-        self.send_message_to_all_downloads(MessageSingleDownloader::NewPrivateId(private_id_bytes));
     }
 
     fn send_message_to_all_downloads(&mut self, message: MessageSingleDownloader) {
@@ -582,7 +576,6 @@ fn get_path_downloads_dir_user(user: &str, config: &Config) -> Result<PathBuf, s
 enum MessageSingleDownloader {
     NewConfig(Config),
     NewSharedUser(SharedUser),
-    NewPrivateId(Vec<u8>),
     NewDownload(String),
     CancelAllDownloads,
     CancelDownload(String),
@@ -599,7 +592,6 @@ enum MessageRevSingleDownloader {
 struct SingleDownloader {
     receiver: Receiver<MessageSingleDownloader>,
     rev_receiver: Receiver<MessageRevSingleDownloader>,
-    private_id_bytes: Vec<u8>,
     shared_user: SharedUser,
     path_queue_file: PathBuf,
     download_queue: VecDeque<String>,
@@ -623,7 +615,6 @@ impl SingleDownloader {
     pub fn new(
         receiver: Receiver<MessageSingleDownloader>,
         rev_receiver: Receiver<MessageRevSingleDownloader>,
-        private_id_bytes: Vec<u8>, // TODO get from Config instead?
         shared_user: SharedUser,
         path_queue_file: PathBuf,
         app_sender: Sender<AppAggMessage>,
@@ -638,7 +629,6 @@ impl SingleDownloader {
         SingleDownloader {
             receiver,
             rev_receiver,
-            private_id_bytes,
             shared_user,
             path_queue_file,
             download_queue,
@@ -755,7 +745,7 @@ impl SingleDownloader {
                         stream,
                         remote_address,
                         vec![self.shared_user.clone()],
-                        self.private_id_bytes.clone(),
+                        self.config.get_local_private_id_bytes().clone(),
                     );
                     transmitic_stream.connect()?
                 }
@@ -991,16 +981,6 @@ impl SingleDownloader {
 
             match self.receiver.try_recv() {
                 Ok(value) => match value {
-                    // TODO delete? grab from config?
-                    MessageSingleDownloader::NewPrivateId(private_id_bytes) => {
-                        self.stop_downloading = true;
-                        self.private_id_bytes = private_id_bytes;
-
-                        self.app_sender.send(AppAggMessage::LogDebug(format!(
-                            "Downloader NewPrivateId {}",
-                            self.shared_user.nickname.clone()
-                        )))?;
-                    }
                     MessageSingleDownloader::NewDownload(s) => {
                         self.download_queue.push_back(s.clone());
                         self.write_queue()?;

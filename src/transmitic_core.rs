@@ -243,7 +243,6 @@ impl TransmiticCore {
 
         let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
         outgoing_guard.set_new_config(self.config.clone());
-        outgoing_guard.set_new_private_id(self.config.get_local_private_id_bytes());
         Ok(())
     }
 
@@ -458,7 +457,6 @@ impl TransmiticCore {
         self.config.set_path_downloads_dir(path)?;
         let mut outgoing_guard = self.outgoing_downloader.lock().unwrap();
         outgoing_guard.set_new_config(self.config.clone());
-        outgoing_guard.restart_connections(); // TODO Redundant with set_new_config now?
         Ok(())
     }
 
