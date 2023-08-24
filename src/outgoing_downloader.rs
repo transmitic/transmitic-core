@@ -557,13 +557,13 @@ fn refresh_single_user(
     Ok(everything_file)
 }
 
-fn create_downloads_dir(config: &Config) -> Result<(), std::io::Error> {
+fn create_downloads_dir(config: &Config) -> Result<(), Box<dyn Error>> {
     let path = config.get_path_downloads_dir()?;
     fs::create_dir_all(path)?;
     Ok(())
 }
 
-fn get_path_downloads_dir_user(user: &str, config: &Config) -> Result<PathBuf, std::io::Error> {
+fn get_path_downloads_dir_user(user: &str, config: &Config) -> Result<PathBuf, Box<dyn Error>> {
     // TOOD update
     let mut path: String = config.get_path_downloads_dir()?;
     path.push_str(user);

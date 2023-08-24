@@ -308,34 +308,31 @@ impl Config {
         self.path_dir_config.clone()
     }
 
-    fn get_users_downloads_dir(&self) -> Result<PathBuf, std::io::Error> {
+    fn get_users_downloads_dir(&self) -> Result<PathBuf, std::env::VarError> {
         let mut key = "HOME";
         if cfg!(windows) {
             key = "USERPROFILE";
         }
 
-        match env::var(key) {
-            Ok(path) => {
-                let mut path = PathBuf::from(path);
-                path.push("Downloads");
-                Ok(path)
-            }
-            Err(_) => {
-                println!("ERROR: Could not find user download dir: {}", key);
-                let mut default_path = env::current_exe()?;
-                default_path.pop();
-                Ok(default_path)
-            }
-        }
+        let home_path = env::var(key)?;
+        let mut path = PathBuf::from(home_path);
+        path.push("Downloads");
+        Ok(path)
     }
 
-    pub fn get_path_downloads_dir(&self) -> Result<String, std::io::Error> {
+    pub fn get_path_downloads_dir(&self) -> Result<String, Box<dyn Error>> {
         // TODO Return Buf and add a pretty string method?
         let mut path = self.config_file.path_downloads.clone();
         if path.is_empty() {
             let mut default_path;
             if is_transmitic_installed()? {
-                default_path = self.get_users_downloads_dir()?;
+                default_path = match self.get_users_downloads_dir() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let err = format!("ERROR: Could not find HOME directory in order to get downloads dir. {}", e);
+                        Err(err)?
+                    }
+                };
             } else {
                 default_path = env::current_exe()?;
                 default_path.pop();
@@ -547,7 +544,7 @@ pub fn create_config_dir() -> Result<(), std::io::Error> {
 pub fn get_path_transmitic_config_dir() -> Result<PathBuf, std::io::Error> {
     let mut path;
     if cfg!(target_os = "macos") && is_transmitic_installed()? {
-        path = PathBuf::from(env::var("HOME").unwrap());
+        path = PathBuf::from(env::var("HOME").unwrap()); // TODO cannot unwrap
         path.push("Library");
         path.push("Application Support");
         path.push("Transmitic");

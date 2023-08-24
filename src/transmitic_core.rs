@@ -448,7 +448,7 @@ impl TransmiticCore {
         outgoing_guard.get_shared_with_me_data()
     }
 
-    pub fn get_path_downloads_dir(&self) -> Result<String, std::io::Error> {
+    pub fn get_path_downloads_dir(&self) -> Result<String, Box<dyn Error>> {
         self.config.get_path_downloads_dir()
     }
 
@@ -605,7 +605,7 @@ impl TransmiticCore {
         Ok(())
     }
 
-    pub fn get_downloads_dir(&self) -> Result<PathBuf, std::io::Error> {
+    pub fn get_downloads_dir(&self) -> Result<PathBuf, Box<dyn Error>> {
         let path = self.config.get_path_downloads_dir()?;
         let path = PathBuf::from(path);
         Ok(path)
