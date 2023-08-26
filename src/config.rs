@@ -535,16 +535,18 @@ pub fn is_transmitic_installed() -> Result<bool, std::io::Error> {
     Ok(false)
 }
 
-pub fn create_config_dir() -> Result<(), std::io::Error> {
+pub fn create_config_dir() -> Result<(), Box<dyn Error>> {
     let path = get_path_transmitic_config_dir()?;
     fs::create_dir_all(path)?;
     Ok(())
 }
 
-pub fn get_path_transmitic_config_dir() -> Result<PathBuf, std::io::Error> {
+pub fn get_path_transmitic_config_dir() -> Result<PathBuf, Box<dyn Error>> {
     let mut path;
     if cfg!(target_os = "macos") && is_transmitic_installed()? {
-        path = PathBuf::from(env::var("HOME").unwrap()); // TODO cannot unwrap
+        let home =
+            env::var("HOME").or(Err("Cannot find HOME directory to get config directory"))?;
+        path = PathBuf::from(home);
         path.push("Library");
         path.push("Application Support");
         path.push("Transmitic");
@@ -556,7 +558,7 @@ pub fn get_path_transmitic_config_dir() -> Result<PathBuf, std::io::Error> {
     Ok(path)
 }
 
-fn get_expected_config_path(encrypted: bool) -> Result<PathBuf, std::io::Error> {
+fn get_expected_config_path(encrypted: bool) -> Result<PathBuf, Box<dyn Error>> {
     if encrypted {
         get_path_encrypted_config()
     } else {
@@ -564,13 +566,13 @@ fn get_expected_config_path(encrypted: bool) -> Result<PathBuf, std::io::Error> 
     }
 }
 
-pub fn get_path_config_json() -> Result<PathBuf, std::io::Error> {
+pub fn get_path_config_json() -> Result<PathBuf, Box<dyn Error>> {
     let mut path = get_path_transmitic_config_dir()?;
     path.push("transmitic_config.json");
     Ok(path)
 }
 
-pub fn get_path_encrypted_config() -> Result<PathBuf, std::io::Error> {
+pub fn get_path_encrypted_config() -> Result<PathBuf, Box<dyn Error>> {
     let mut path = get_path_transmitic_config_dir()?;
     path.push("transmitic_config.etrc");
     Ok(path)
