@@ -61,13 +61,18 @@ pub struct CompletedDownloadState {
     pub path_local_disk: String,
 }
 
+pub struct InvalidResult {
+    pub path: String,
+    pub message: String,
+}
+
 pub struct SingleDownloadState {
     pub active_download_path: Option<String>,
     pub active_download_percent: u64,
     pub active_download_local_path: Option<String>,
     pub active_download_size: String,
     pub download_queue: VecDeque<String>,
-    pub invalid_downloads: Vec<String>,
+    pub invalid_downloads: Vec<InvalidResult>,
     pub completed_downloads: Vec<CompletedMessage>,
     pub is_online: bool,
     pub error: Option<String>,

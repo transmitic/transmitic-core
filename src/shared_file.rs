@@ -6,6 +6,7 @@ use crate::config::file_contains_only_valid_chars;
 pub struct SelectedDownload {
     pub path: String,
     pub owner: String,
+    pub file_size: u64,
 }
 
 #[derive(Debug, Clone)]

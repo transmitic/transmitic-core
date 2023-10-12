@@ -359,8 +359,10 @@ impl OutgoingDownloader {
         for download in downloads {
             match self.channel_map.get(&download.owner) {
                 Some((channel, _)) => {
-                    match channel.send(MessageSingleDownloader::NewDownload(download.path.clone()))
-                    {
+                    match channel.send(MessageSingleDownloader::NewDownload(DownloadQueueItem {
+                        path: download.path.clone(),
+                        file_size: download.file_size,
+                    })) {
                         Ok(_) => {}
                         Err(_) => {
                             // Thread shutdown
@@ -368,12 +370,17 @@ impl OutgoingDownloader {
                             self.add_to_queue_file_and_start_downloader(
                                 download.owner,
                                 download.path,
+                                download.file_size,
                             )?;
                         }
                     }
                 }
                 None => {
-                    self.add_to_queue_file_and_start_downloader(download.owner, download.path)?;
+                    self.add_to_queue_file_and_start_downloader(
+                        download.owner,
+                        download.path,
+                        download.file_size,
+                    )?;
                 }
             }
         }
@@ -394,6 +401,7 @@ impl OutgoingDownloader {
         &mut self,
         download_owner: String,
         download_path: String,
+        download_file_size: u64,
     ) -> Result<(), Box<dyn Error>> {
         // TODO func for path
         let mut path_queue_file: PathBuf = self.config.get_path_dir_config();
@@ -405,7 +413,7 @@ impl OutgoingDownloader {
             .open(path_queue_file)?;
 
         // TODO func with write_queue()
-        let write_path = format!("{}\n", download_path);
+        let write_path = format!("{}:{}\n", download_file_size, download_path);
         file.write_all(write_path.as_bytes())?;
 
         for user in self.config.get_shared_users() {
@@ -576,7 +584,7 @@ fn get_path_downloads_dir_user(user: &str, config: &Config) -> Result<PathBuf, B
 enum MessageSingleDownloader {
     NewConfig(Config),
     NewSharedUser(SharedUser),
-    NewDownload(String),
+    NewDownload(DownloadQueueItem),
     CancelAllDownloads,
     CancelDownload(String),
     PauseDownloads,
@@ -589,16 +597,22 @@ enum MessageRevSingleDownloader {
     NewConnection(EncryptedStream),
 }
 
+#[derive(Clone)]
+struct DownloadQueueItem {
+    path: String,
+    file_size: u64,
+}
+
 struct SingleDownloader {
     receiver: Receiver<MessageSingleDownloader>,
     rev_receiver: Receiver<MessageRevSingleDownloader>,
     shared_user: SharedUser,
     path_queue_file: PathBuf,
-    download_queue: VecDeque<String>,
+    download_queue: VecDeque<DownloadQueueItem>,
     is_downloading_paused: bool,
     stop_downloading: bool,
     app_sender: Sender<AppAggMessage>,
-    active_download_path: Option<String>,
+    active_download_path: Option<DownloadQueueItem>,
     active_download_size: u64,
     active_downloaded_current_bytes: u64,
     active_download_local_path: Option<String>,
@@ -792,17 +806,19 @@ impl SingleDownloader {
                 };
 
                 // Check if file is valid
-                let shared_file = match get_file_by_path(&path_active_download, &everything_file) {
-                    Some(file) => file,
-                    None => {
-                        // Is invalid file
-                        self.download_queue.pop_front();
-                        self.write_queue()?;
-                        self.active_download_path = None;
-                        self.app_update_invalid_file(&path_active_download)?;
-                        continue;
-                    }
-                };
+                let shared_file =
+                    match get_file_by_path(&path_active_download.path, &everything_file) {
+                        Some(file) => file,
+                        None => {
+                            // Is invalid file
+                            self.set_active_download_finished()?;
+                            self.app_update_invalid_file(
+                                &path_active_download.path,
+                                "No longer shared with you".to_string(),
+                            )?;
+                            continue;
+                        }
+                    };
 
                 self.active_download_path = Some(path_active_download.clone());
                 self.active_download_size = shared_file.file_size;
@@ -825,13 +841,11 @@ impl SingleDownloader {
                 )?;
 
                 // Download was _not_ interrupted, therefore it completed
-                if !self.stop_downloading {
-                    // TODO duped with above in invalid
-                    self.download_queue.pop_front();
-                    self.write_queue()?;
-                    self.active_download_path = None;
+                // Queue files update completed in download loop, so only directory check here
+                if !self.stop_downloading && shared_file.is_directory {
+                    self.set_active_download_finished()?;
                     self.app_update_completed(
-                        &path_active_download,
+                        &path_active_download.path,
                         destination_path,
                         self.active_download_total_size.clone(),
                     )?;
@@ -881,27 +895,97 @@ impl SingleDownloader {
             destination_path.push_str(&current_path_name);
             //println!("Saving to: {}", destination_path);
 
-            // Send selection to server
-
-            let file_length: u64 = if Path::new(&destination_path).exists() {
+            let mut current_downloaded_bytes: usize;
+            let does_file_exist = Path::new(&destination_path).exists();
+            let file_length: u64 = if does_file_exist {
                 metadata(&destination_path)?.len()
             } else {
                 0
             };
+            current_downloaded_bytes = file_length as usize;
+            self.active_downloaded_current_bytes += current_downloaded_bytes as u64;
 
+            let queue_download: DownloadQueueItem = self.active_download_path.clone().unwrap();
+            let is_queue_file_downloading = shared_file.path == queue_download.path;
+
+            // Verify file sizes if directory is NOT the active download
+            //  We can check expectation from queue file
+            if is_queue_file_downloading {
+                if queue_download.file_size != shared_file.file_size {
+                    self.set_active_download_finished()?;
+                    self.app_update_invalid_file(&queue_download.path,"Expected file size has changed. Suggestion: Delete file and restart download.".to_string())?;
+                    return Ok(());
+                }
+
+                match file_length.cmp(&queue_download.file_size) {
+                    std::cmp::Ordering::Less => {}
+                    std::cmp::Ordering::Equal => {
+                        // Create the valid, empty file, to avoid asking server
+                        // Duped below
+                        if !does_file_exist && shared_file.file_size == 0 {
+                            File::create(&destination_path)?;
+                        }
+
+                        self.set_active_download_finished()?;
+                        self.app_update_completed(
+                            &queue_download.path,
+                            destination_path,
+                            self.active_download_total_size.clone(),
+                        )?;
+                        return Ok(());
+                    }
+                    std::cmp::Ordering::Greater => {
+                        self.set_active_download_finished()?;
+                        self.app_update_invalid_file(&queue_download.path,"File is larger than expected. Suggestion: Delete file and restart download.".to_string())?;
+                        return Ok(());
+                    }
+                }
+            // A directory and the subfiles
+            } else {
+                // Dir too big
+                if self.active_downloaded_current_bytes > queue_download.file_size {
+                    let err = "Directory is larger than expected. Suggestion: Delete directory and restart download.".to_string();
+                    self.set_active_download_finished()?;
+                    self.app_update_invalid_file(&queue_download.path, err.clone())?;
+                    // Err to stop the directory from continuing to download
+                    return Err(err)?;
+                }
+
+                // A subfile
+                match file_length.cmp(&shared_file.file_size) {
+                    std::cmp::Ordering::Less => {}
+                    std::cmp::Ordering::Equal => {
+                        // Create the valid, empty file, to avoid asking server
+                        // Duped above
+                        if !does_file_exist && shared_file.file_size == 0 {
+                            File::create(&destination_path)?;
+                        }
+
+                        self.app_sender.send(AppAggMessage::LogInfo(format!(
+                            "Subfile already downloaded '{}' - {}",
+                            self.shared_user.nickname, shared_file.path
+                        )))?;
+                        return Ok(());
+                    }
+                    std::cmp::Ordering::Greater => {
+                        self.app_update_invalid_file(&shared_file.path,"Directory subfile is larger than expected. Suggestion: Delete file and restart download.".to_string())?;
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Send selection to server
             let mut file_continue_payload = file_length.to_be_bytes().to_vec();
             file_continue_payload.extend_from_slice(shared_file.path.as_bytes());
             encrypted_stream.write(MSG_FILE_SELECTION_CONTINUE, &file_continue_payload)?;
 
             // Check first response for error
+            // Do this to prevent creating an empty file that we'd have to delete
             encrypted_stream.read()?;
-            let remote_message = encrypted_stream.get_message()?;
+            let mut remote_message = encrypted_stream.get_message()?;
 
-            if remote_message == MSG_FILE_FINISHED {
-                return Ok(());
-            } else if remote_message == MSG_FILE_CHUNK {
-                // Expected, most likely
-            } else {
+            // Check duped below
+            if remote_message != MSG_FILE_CHUNK && remote_message != MSG_FILE_FINISHED {
                 // TODO API mismatch, downloader should be disabled
                 return Err(format!(
                     "{} Initial file download unexpected msg {}",
@@ -911,19 +995,14 @@ impl SingleDownloader {
             }
 
             // Valid file, download it
-            let mut current_downloaded_bytes: usize;
             let mut f: File;
             // TODO use .create() and remove else?
             if Path::new(&destination_path).exists() {
                 f = OpenOptions::new().write(true).open(&destination_path)?;
                 f.seek(SeekFrom::End(0))?;
-                current_downloaded_bytes = metadata(&destination_path)?.len() as usize;
             } else {
                 f = File::create(&destination_path)?;
-                current_downloaded_bytes = 0;
             }
-
-            self.active_downloaded_current_bytes += current_downloaded_bytes as u64;
 
             loop {
                 let mut payload_bytes: Vec<u8> = Vec::new();
@@ -939,18 +1018,47 @@ impl SingleDownloader {
                     self.progress_current_time = Instant::now();
                 }
 
-                encrypted_stream.read()?;
+                // -- Check file sizes to determine if we're done
+                let is_remote_finished = remote_message == MSG_FILE_FINISHED;
+                let mut is_local_finished: bool = false;
 
-                self.read_receiver()?;
-                if self.stop_downloading {
-                    return Ok(());
+                // Using the queue file size
+                if is_queue_file_downloading {
+                    if current_downloaded_bytes == queue_download.file_size as usize {
+                        is_local_finished = true;
+                    }
+                // Not in queue file. Is sub directory file. Use shared_file.
+                } else if current_downloaded_bytes == shared_file.file_size as usize {
+                    is_local_finished = true;
                 }
 
-                let remote_message = encrypted_stream.get_message()?;
-                if remote_message == MSG_FILE_FINISHED {
+                // Both agree. Success. Done.
+                if is_remote_finished && is_local_finished {
+                    // Directory subfiles do NOT go into completed list
+                    if is_queue_file_downloading {
+                        self.set_active_download_finished()?;
+                        self.app_update_completed(
+                            &queue_download.path,
+                            destination_path,
+                            self.active_download_total_size.clone(),
+                        )?;
+                    }
                     break;
+                // Mismatched expectations
+                } else if is_remote_finished ^ is_local_finished {
+                    let err = format!("Remote and local disagreement on finished download. Is Local Finished: {}. Is Remote Finished: {}. Suggestion: Delete file and download again.", is_local_finished, is_remote_finished).to_string();
+                    if is_queue_file_downloading {
+                        self.set_active_download_finished()?;
+                    }
+                    self.app_update_invalid_file(&shared_file.path, err.clone())?;
+                    // Error to reset connection and not get out of sync with stream read/write of server
+                    Err(err)?;
                 }
-                if remote_message != MSG_FILE_CHUNK {
+
+                encrypted_stream.read()?;
+                remote_message = encrypted_stream.get_message()?;
+                // Chcked duped above
+                if remote_message != MSG_FILE_CHUNK && remote_message != MSG_FILE_FINISHED {
                     // TODO API mismatch, downloader should be disabled
                     return Err(format!(
                         "{} Mid file download unexpected msg {}",
@@ -958,9 +1066,21 @@ impl SingleDownloader {
                     )
                     .into());
                 }
+
+                self.read_receiver()?;
+                if self.stop_downloading {
+                    return Ok(());
+                }
             }
         }
 
+        Ok(())
+    }
+
+    fn set_active_download_finished(&mut self) -> Result<(), Box<dyn Error>> {
+        self.download_queue.pop_front();
+        self.write_queue()?;
+        self.active_download_path = None;
         Ok(())
     }
 
@@ -988,15 +1108,21 @@ impl SingleDownloader {
                         self.app_sender.send(AppAggMessage::LogDebug(format!(
                             "Downloader new download {} - {}",
                             self.shared_user.nickname.clone(),
-                            s
+                            s.path
                         )))?;
                     }
                     MessageSingleDownloader::CancelDownload(s) => {
                         self.stop_downloading = true;
-                        self.download_queue.retain(|f| f != &s);
-                        if self.active_download_path == Some(s.clone()) {
-                            self.active_download_path = None;
+                        self.download_queue.retain(|f| f.path != s);
+                        match &self.active_download_path {
+                            Some(p) => {
+                                if p.path == s {
+                                    self.active_download_path = None;
+                                }
+                            }
+                            None => {}
                         }
+
                         self.write_queue()?;
                         self.app_update_in_progress()?;
 
@@ -1085,9 +1211,16 @@ impl SingleDownloader {
     // TODO combine update_offline and in_progress into 1 method, and the downloader struct should track is_offline
     //  then remove app_update_in_progress from read_receiver?
     fn app_update_offline(&self) -> Result<(), Box<dyn Error>> {
+        let download_queue: VecDeque<String> = self
+            .download_queue
+            .clone()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+
         let i = OfflineMessage {
             nickname: self.shared_user.nickname.clone(),
-            download_queue: self.download_queue.clone(),
+            download_queue,
         };
         self.app_sender.send(AppAggMessage::Offline(i))?;
 
@@ -1095,9 +1228,10 @@ impl SingleDownloader {
     }
 
     fn app_update_in_progress(&self) -> Result<(), Box<dyn Error>> {
+        let path: Option<String> = self.active_download_path.as_ref().map(|p| p.path.clone());
         let i = InProgressMessage {
             nickname: self.shared_user.nickname.clone(),
-            path: self.active_download_path.clone(),
+            path,
             percent: ((self.active_downloaded_current_bytes as f64
                 / self.active_download_size as f64)
                 * 100_f64) as u64,
@@ -1128,12 +1262,14 @@ impl SingleDownloader {
         Ok(())
     }
 
-    fn app_update_invalid_file(&self, path: &str) -> Result<(), Box<dyn Error>> {
+    fn app_update_invalid_file(&self, path: &str, message: String) -> Result<(), Box<dyn Error>> {
+        let active_path = self.active_download_path.as_ref().map(|p| p.path.clone());
         let i = InvalidFileMessage {
             nickname: self.shared_user.nickname.clone(),
-            active_path: self.active_download_path.clone(),
+            active_path,
             invalid_path: path.to_string(),
             download_queue: self.get_queue_without_active(),
+            message,
         };
         self.app_sender.send(AppAggMessage::InvalidFile(i))?;
 
@@ -1141,13 +1277,15 @@ impl SingleDownloader {
     }
 
     fn get_queue_without_active(&self) -> VecDeque<String> {
-        let mut queue = self.download_queue.clone();
+        let mut queue: VecDeque<DownloadQueueItem> = self.download_queue.clone();
         match &self.active_download_path {
-            Some(path) => queue.retain(|f| f != path),
+            Some(path) => queue.retain(|f| f.path != path.path),
             None => {}
         }
 
-        queue
+        let str_queue: VecDeque<String> = queue.into_iter().map(|f| f.path).collect();
+
+        str_queue
     }
 
     fn initialize_download_queue(&mut self) -> Result<(), Box<dyn Error>> {
@@ -1156,9 +1294,28 @@ impl SingleDownloader {
         if let Ok(contents) = fs::read_to_string(&self.path_queue_file) {
             for mut line in contents.lines() {
                 line = line.trim();
-                if !line.is_empty() {
-                    self.download_queue.push_back(line.to_string());
+                if line.is_empty() {
+                    continue;
                 }
+                // TODO test
+                // TODO move sep char to const
+                let split: Vec<&str> = line.split(':').collect();
+                if split.len() < 2 {
+                    Err(format!(
+                        "Failed to parse queue file. Invalid line. '{}', '{}'",
+                        self.shared_user.nickname, line
+                    ))?;
+                }
+                let file_size: u64 = match split[0].to_string().parse() {
+                    Ok(f) => f,
+                    Err(_) => Err(format!(
+                        "Failed to parse queue file. Invalid file size in line. '{}', '{}'",
+                        self.shared_user.nickname, line
+                    ))?,
+                };
+                let path = split[1..].join(":");
+                self.download_queue
+                    .push_back(DownloadQueueItem { path, file_size });
             }
         }
 
@@ -1196,7 +1353,7 @@ impl SingleDownloader {
 
     fn write_queue_file(&self, mut write_string: String) -> Result<(), Box<dyn Error>> {
         for f in &self.download_queue {
-            writeln!(write_string, "{}", f).unwrap();
+            writeln!(write_string, "{}:{}", f.file_size, f.path).unwrap();
         }
 
         let mut f = OpenOptions::new()

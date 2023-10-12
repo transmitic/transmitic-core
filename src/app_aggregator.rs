@@ -8,7 +8,7 @@ use crate::encrypted_stream::EncryptedStream;
 use crate::incoming_uploader::IncomingUploaderError;
 use crate::logger::{LogLevel, Logger};
 use crate::outgoing_downloader::OutgoingDownloader;
-use crate::transmitic_core::{SingleDownloadState, SingleUploadState};
+use crate::transmitic_core::{InvalidResult, SingleDownloadState, SingleUploadState};
 
 // TODO combine them all into 1 struct?
 pub struct InvalidFileMessage {
@@ -16,6 +16,7 @@ pub struct InvalidFileMessage {
     pub active_path: Option<String>,
     pub invalid_path: String,
     pub download_queue: VecDeque<String>,
+    pub message: String,
 }
 
 pub struct InProgressMessage {
@@ -132,17 +133,21 @@ fn app_loop(
                     ),
                     LogLevel::Warning,
                 );
+                let invalid_result = InvalidResult {
+                    path: f.invalid_path,
+                    message: f.message,
+                };
                 match l.get_mut(&f.nickname) {
                     Some(h) => {
                         h.active_download_path = f.active_path;
-                        h.invalid_downloads.push(f.invalid_path);
+                        h.invalid_downloads.push(invalid_result); // TODO push if not already in there
                         h.download_queue = f.download_queue;
                         h.is_online = true;
                     }
                     None => {
                         let mut s = SingleDownloadState::default();
                         s.active_download_path = f.active_path;
-                        s.invalid_downloads.push(f.invalid_path);
+                        s.invalid_downloads.push(invalid_result); // TODO push if not already in there
                         s.download_queue = f.download_queue;
                         l.insert(f.nickname, s);
                     }
