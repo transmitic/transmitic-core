@@ -687,21 +687,17 @@ impl SingleUploader {
                     is_online: true,
                 }))?;
 
-            let mut read_buffer = [0; MAX_DATA_SIZE];
+            let mut read_buffer = vec![0; MAX_DATA_SIZE];
             let mut current_sent_bytes: usize = file_seek_point as usize;
-            let mut download_percent: u64;
             let file_size_f64: f64 = client_shared_file.file_size as f64;
-            let mut update_progress = false;
             loop {
                 let read_response = f.read(&mut read_buffer)?;
                 current_sent_bytes += read_response;
-                // TODO move into update progress
-                download_percent = (((current_sent_bytes as f64) / file_size_f64) * 100_f64) as u64;
 
                 // Note: Ideally read_response==0 will only happen on empty files. And client should create it itself.
                 // If not, that would only happen if expectations of the shared_file and actual file
                 // changed, which the client will reject anyway
-                let write_message = if client_shared_file.file_size as usize == current_sent_bytes
+                let write_message = if current_sent_bytes >= client_shared_file.file_size as usize
                     || read_response == 0
                 {
                     MSG_FILE_FINISHED
@@ -717,13 +713,10 @@ impl SingleUploader {
 
                 // Throttle updates
                 if progress_current_time.elapsed().as_secs() > 1 {
-                    update_progress = true;
                     progress_current_time = Instant::now();
-                }
 
-                // TODO move into above?
-                if update_progress {
-                    update_progress = false;
+                    let download_percent =
+                        (((current_sent_bytes as f64) / file_size_f64) * 100_f64) as u64;
 
                     self.app_sender
                         .send(AppAggMessage::UploadStateChange(SingleUploadState {
