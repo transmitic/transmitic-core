@@ -45,6 +45,22 @@ impl SharedFile {
     }
 }
 
+/// Reset the file size strings to ensure they are accurate to prevent malicious mismatches from server
+pub fn reset_file_size_string(shared_file: &mut SharedFile) {
+    if !shared_file.is_directory {
+        shared_file.set_file_size_string();
+        return;
+    }
+
+    for file in shared_file.files.iter_mut() {
+        if file.is_directory {
+            reset_file_size_string(file);
+        }
+        file.set_file_size_string();
+    }
+    shared_file.set_file_size_string();
+}
+
 pub fn remove_invalid_files(shared_file: &mut SharedFile) {
     if shared_file.is_directory {
         shared_file

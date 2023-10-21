@@ -5,7 +5,9 @@ use crate::{
     },
     core_consts::{MSG_FILE_CHUNK, MSG_FILE_FINISHED, MSG_FILE_SELECTION_CONTINUE},
     encrypted_stream::EncryptedStream,
-    shared_file::{remove_invalid_files, RefreshData, SelectedDownload, SharedFile},
+    shared_file::{
+        remove_invalid_files, reset_file_size_string, RefreshData, SelectedDownload, SharedFile,
+    },
     utils::get_file_by_path,
 };
 use core::time;
@@ -573,6 +575,7 @@ fn download_everything_file(
     let files_str = std::str::from_utf8(&json_bytes)?;
     let mut everything_file: SharedFile = serde_json::from_str(files_str)?;
     remove_invalid_files(&mut everything_file);
+    reset_file_size_string(&mut everything_file);
     //print_shared_files(&everything_file, "");
     Ok(everything_file)
 }
