@@ -36,6 +36,8 @@ const ERR_REC_DISCONNECTED: &str = "Uploader receiver disconnected";
 pub const ERR_REMOTE_ID_MISMATCH: &str = "PublicID for user is rejected.";
 pub const ERR_REMOTE_ID_NOT_FOUND: &str = "Could not find matching PublicID. User unknown.";
 
+const MAX_EVERYTHING_FILE_SIZE: usize = 100_000_000;
+
 #[cfg(debug_assertions)]
 const MAX_RETRY_SLEEP: u64 = 5;
 
@@ -541,9 +543,15 @@ fn refresh_single_user(
     );
     let mut encrypted_stream = transmitic_stream.connect()?;
 
-    // request file list
-    encrypted_stream.write(MSG_FILE_LIST, &Vec::new())?;
+    let everything_file = download_everything_file(&mut encrypted_stream)?;
 
+    Ok(everything_file)
+}
+
+fn download_everything_file(
+    encrypted_stream: &mut EncryptedStream,
+) -> Result<SharedFile, Box<dyn Error>> {
+    encrypted_stream.write(MSG_FILE_LIST, &Vec::new())?;
     let mut json_bytes: Vec<u8> = Vec::new();
     let mut client_message: u16;
     loop {
@@ -551,17 +559,21 @@ fn refresh_single_user(
         client_message = encrypted_stream.get_message()?;
         json_bytes.extend_from_slice(encrypted_stream.get_payload()?);
 
+        if json_bytes.len() > MAX_EVERYTHING_FILE_SIZE {
+            return Err(format!(
+                "File list is too large. {} needs to share fewer files with you.",
+                encrypted_stream.shared_user.nickname
+            ))?;
+        }
+
         if client_message == MSG_FILE_LIST_FINAL {
             break;
         }
     }
-
     let files_str = std::str::from_utf8(&json_bytes)?;
     let mut everything_file: SharedFile = serde_json::from_str(files_str)?;
-
     remove_invalid_files(&mut everything_file);
     //print_shared_files(&everything_file, "");
-
     Ok(everything_file)
 }
 
@@ -766,26 +778,7 @@ impl SingleDownloader {
             };
             sleep_secs = 5;
 
-            // request file list
-            encrypted_stream.write(MSG_FILE_LIST, &Vec::new())?;
-
-            let mut json_bytes: Vec<u8> = Vec::new();
-            let mut client_message: u16;
-            loop {
-                encrypted_stream.read()?;
-                client_message = encrypted_stream.get_message()?;
-                json_bytes.extend_from_slice(encrypted_stream.get_payload()?);
-
-                if client_message == MSG_FILE_LIST_FINAL {
-                    break;
-                }
-            }
-
-            let files_str = std::str::from_utf8(&json_bytes)?;
-            let mut everything_file: SharedFile = serde_json::from_str(files_str)?;
-
-            remove_invalid_files(&mut everything_file);
-            //print_shared_files(&everything_file, "");
+            let everything_file = download_everything_file(&mut encrypted_stream)?;
 
             let internal_refresh = InternalRefreshData {
                 error: None,
