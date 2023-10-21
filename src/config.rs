@@ -765,6 +765,14 @@ fn verify_config_my_private_id(my_private_id: &str) -> Result<(), Box<dyn Error>
     Ok(())
 }
 
+fn get_blocked_user_name_chars() -> String {
+    let mut block_chars = get_blocked_file_name_chars();
+    block_chars.push('.');
+    block_chars.push('{');
+    block_chars.push('}');
+    block_chars
+}
+
 fn get_blocked_file_name_chars() -> String {
     let mut block_chars = get_blocked_file_path_chars();
     block_chars.push('\\');
@@ -867,10 +875,16 @@ fn verify_config_shared_users(shared_users: &[SharedUser]) -> Result<(), Box<dyn
         if user.nickname.is_empty() {
             return Err("Nickname cannot be empty.".into());
         }
-        for c in get_blocked_file_name_chars().chars() {
+
+        for c in get_blocked_user_name_chars().chars() {
             if user.nickname.contains(c) {
-                return Err(format!("Nickname '{}' contains the character '{}' which is not allowed. These characters are not allowed:   {}'.", user.nickname, c, get_blocked_file_name_chars()).into());
+                return Err(format!("Nickname '{}' contains the character '{}' which is not allowed. These characters are not allowed:   {}'.", user.nickname, c, get_blocked_user_name_chars()).into());
             }
+        }
+
+        let nickname_lower = user.nickname.to_lowercase();
+        if nickname_lower.contains("transmitic") {
+            return Err("Nickname cannot contain the word 'transmitic'.".into());
         }
 
         // Verify port
