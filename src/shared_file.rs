@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::config::file_contains_only_valid_chars;
 
@@ -22,8 +22,28 @@ pub struct SharedFile {
     pub path: String,
     pub is_directory: bool,
     pub files: Vec<SharedFile>,
+    #[serde(serialize_with = "u64_to_string")] // Needed for UI
+    #[serde(deserialize_with = "string_to_u64")] // Needed for UI
     pub file_size: u64,
     pub size_string: String,
+}
+
+fn u64_to_string<S>(x: &u64, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    s.serialize_str(&x.to_string())
+}
+
+fn string_to_u64<'de, T, D>(de: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: std::str::FromStr,
+    <T as std::str::FromStr>::Err: std::fmt::Display,
+{
+    String::deserialize(de)?
+        .parse()
+        .map_err(serde::de::Error::custom)
 }
 
 impl SharedFile {
