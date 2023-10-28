@@ -68,6 +68,9 @@ impl Logger {
 
     pub fn set_is_file_logging(&mut self, state: bool) {
         self.is_log_to_file = state;
+        if state {
+            self.write_all_to_log();
+        }
     }
 
     pub fn get_is_file_logging(&self) -> bool {
@@ -113,23 +116,7 @@ impl Logger {
 
     fn log_to_file(&mut self, message: String) {
         if self.log_file_write_count >= LOG_FILE_ROTATE_COUNT {
-            match OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&self.log_path)
-            {
-                Ok(mut f) => {
-                    for message in self.log_lines.iter() {
-                        let _ = f.write(format!("{}\n", message).as_bytes()).ok();
-                    }
-                }
-                Err(e) => {
-                    self.log_lines
-                        .push_front(format!("[ERROR] | Failed to open truncate log {}", e));
-                }
-            }
-
+            self.write_all_to_log();
             self.log_file_write_count = 0;
         } else {
             match OpenOptions::new()
@@ -147,6 +134,25 @@ impl Logger {
             }
 
             self.log_file_write_count += 1;
+        }
+    }
+
+    fn write_all_to_log(&mut self) {
+        match OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&self.log_path)
+        {
+            Ok(mut f) => {
+                for message in self.log_lines.iter().rev() {
+                    let _ = f.write(format!("{}\n", message).as_bytes()).ok();
+                }
+            }
+            Err(e) => {
+                self.log_lines
+                    .push_front(format!("[ERROR] | Failed to open truncate log {}", e));
+            }
         }
     }
 }
