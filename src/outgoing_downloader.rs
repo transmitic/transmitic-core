@@ -3,7 +3,10 @@ use crate::{
         AppAggMessage, CompletedMessage, InProgressMessage, InvalidFileMessage,
         OfflineErrorMessage, OfflineMessage,
     },
-    core_consts::{MSG_FILE_CHUNK, MSG_FILE_FINISHED, MSG_FILE_SELECTION_CONTINUE},
+    core_consts::{
+        MSG_FILE_CHUNK, MSG_FILE_FINISHED, MSG_FILE_INVALID_FILE, MSG_FILE_SELECTION_CONTINUE,
+        MSG_REVERSE,
+    },
     encrypted_stream::EncryptedStream,
     shared_file::{
         remove_invalid_files, reset_file_size_string, RefreshData, SelectedDownload, SharedFile,
@@ -781,16 +784,33 @@ impl SingleDownloader {
             };
             sleep_secs = 5;
 
-            let everything_file = download_everything_file(&mut encrypted_stream)?;
+            // -- Everything file and refresh data
+            self.set_everything_file(&mut encrypted_stream, false)?;
 
-            let internal_refresh = InternalRefreshData {
-                error: None,
-                data: Some(everything_file.clone()),
-                recv: None,
+            let refresh_guard = self.refresh_data.lock().unwrap();
+            let everything_file = match refresh_guard.get(&self.shared_user.nickname.clone()) {
+                Some(d) => match &d.data {
+                    Some(e) => e.clone(),
+                    None => {
+                        drop(refresh_guard);
+                        self.app_sender.send(AppAggMessage::LogWarning(format!(
+                            "Everything file unexpectedly has no data: '{}'",
+                            self.shared_user.nickname
+                        )))?;
+                        continue;
+                    }
+                },
+                None => {
+                    drop(refresh_guard);
+                    self.app_sender.send(AppAggMessage::LogWarning(format!(
+                        "Everything file unexpectedly missing: '{}'",
+                        self.shared_user.nickname
+                    )))?;
+                    continue;
+                }
             };
-            let mut refresh_guard = self.refresh_data.lock().unwrap();
-            refresh_guard.insert(self.shared_user.nickname.clone(), internal_refresh);
             drop(refresh_guard);
+            // --
 
             loop {
                 let path_active_download = match self.download_queue.get(0) {
@@ -885,8 +905,6 @@ impl SingleDownloader {
                 }
             }
         } else {
-            // Create directory for file download
-            fs::create_dir_all(download_dir)?;
             let mut destination_path = download_dir.to_string();
             destination_path.push_str(&current_path_name);
             //println!("Saving to: {}", destination_path);
@@ -919,6 +937,7 @@ impl SingleDownloader {
                         // Create the valid, empty file, to avoid asking server
                         // Duped below
                         if !does_file_exist && shared_file.file_size == 0 {
+                            fs::create_dir_all(download_dir)?;
                             File::create(&destination_path)?;
                         }
 
@@ -954,6 +973,7 @@ impl SingleDownloader {
                         // Create the valid, empty file, to avoid asking server
                         // Duped above
                         if !does_file_exist && shared_file.file_size == 0 {
+                            fs::create_dir_all(download_dir)?;
                             File::create(&destination_path)?;
                         }
 
@@ -980,6 +1000,17 @@ impl SingleDownloader {
             encrypted_stream.read()?;
             let mut remote_message = encrypted_stream.get_message()?;
 
+            if remote_message == MSG_FILE_INVALID_FILE {
+                // Everything file out of date. Get a new copy.
+                self.set_everything_file(encrypted_stream, true)?;
+                // Err out to let loop restart, which will then set invalid
+                return Err(format!(
+                    "{} Invalid file on first read. {}",
+                    self.shared_user.nickname, shared_file.path
+                )
+                .into());
+            }
+
             // Check duped below
             if remote_message != MSG_FILE_CHUNK && remote_message != MSG_FILE_FINISHED {
                 // TODO API mismatch, downloader should be disabled
@@ -990,6 +1021,7 @@ impl SingleDownloader {
                 .into());
             }
 
+            fs::create_dir_all(download_dir)?;
             // Valid file, download it
             let mut f: File;
             // TODO use .create() and remove else?
@@ -1068,6 +1100,53 @@ impl SingleDownloader {
                     return Ok(());
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    fn set_everything_file(
+        &mut self,
+        encrypted_stream: &mut EncryptedStream,
+        force_download: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        let mut should_download_everything_file =
+            encrypted_stream.reverse_message == MSG_REVERSE || force_download;
+        // Check refresh data if needed
+        if !should_download_everything_file {
+            let refresh_guard = self.refresh_data.lock().unwrap();
+            match refresh_guard.get(&self.shared_user.nickname) {
+                Some(d) => {
+                    if d.data.is_none() {
+                        should_download_everything_file = true;
+                    }
+                }
+                None => {
+                    // Err out to let loop reset and cancel downloader
+                    Err(format!(
+                        "Cache missing. User no longer being shared with: '{}'",
+                        self.shared_user.nickname
+                    ))?;
+                }
+            }
+            drop(refresh_guard);
+        }
+
+        if should_download_everything_file {
+            self.app_sender.send(AppAggMessage::LogInfo(format!(
+                "Download Everything File: '{}'",
+                self.shared_user.nickname
+            )))?;
+            let everything_file = download_everything_file(encrypted_stream)?;
+
+            let internal_refresh = InternalRefreshData {
+                error: None,
+                data: Some(everything_file.clone()),
+                recv: None,
+            };
+            let mut refresh_guard = self.refresh_data.lock().unwrap();
+            refresh_guard.insert(self.shared_user.nickname.clone(), internal_refresh);
+            drop(refresh_guard);
         }
 
         Ok(())

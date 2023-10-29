@@ -5,8 +5,8 @@ use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::panic::AssertUnwindSafe;
-use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
 use std::{panic, thread};
 
@@ -15,7 +15,7 @@ use crate::config::{get_everything_file, Config, SharedUser};
 use crate::core_consts::{
     DENIED_SLEEP, MAX_DATA_SIZE, MSG_CANNOT_SELECT_DIRECTORY, MSG_FILE_CHUNK, MSG_FILE_FINISHED,
     MSG_FILE_INVALID_FILE, MSG_FILE_LIST, MSG_FILE_LIST_FINAL, MSG_FILE_LIST_PIECE,
-    MSG_FILE_SELECTION_CONTINUE, MSG_REVERSE,
+    MSG_FILE_SELECTION_CONTINUE, MSG_REVERSE, MSG_REVERSE_NO_LIST,
 };
 use crate::encrypted_stream::EncryptedStream;
 use crate::shared_file::SharedFile;
@@ -135,6 +135,9 @@ struct UploaderManager {
     single_uploaders: Vec<Sender<MessageSingleUploader>>,
     single_uploaders_rev: HashMap<String, Sender<MessageSingleUploader>>,
     app_sender: Sender<AppAggMessage>,
+    // Shared users who have the latest file listing. They do not need to request it.
+    // Only used when in Reverse Connection mode
+    reverse_file_list_cache: Arc<Mutex<Vec<String>>>,
 }
 
 impl UploaderManager {
@@ -147,6 +150,11 @@ impl UploaderManager {
         let single_uploaders = Vec::with_capacity(10);
         let single_uploaders_rev: HashMap<String, Sender<MessageSingleUploader>> = HashMap::new();
 
+        // Duped in reset_connection
+        let reverse_file_list_vec: Vec<String> =
+            Vec::with_capacity(config.get_shared_users().len());
+        let reverse_file_list_cache = Arc::new(Mutex::new(reverse_file_list_vec));
+
         UploaderManager {
             stop_incoming: false,
             receiver,
@@ -155,6 +163,7 @@ impl UploaderManager {
             single_uploaders,
             single_uploaders_rev,
             app_sender,
+            reverse_file_list_cache,
         }
     }
 
@@ -236,6 +245,7 @@ impl UploaderManager {
 
                         let single_config = self.config.clone();
                         let app_sender_clone = self.app_sender.clone();
+                        let reverse_file_list_clone = self.reverse_file_list_cache.clone();
                         thread::spawn(move || {
                             let thread_app_sender = app_sender_clone.clone();
 
@@ -261,6 +271,7 @@ impl UploaderManager {
                             single_thread(
                                 stream,
                                 Some(shared_user),
+                                reverse_file_list_clone,
                                 rx,
                                 single_config,
                                 thread_app_sender,
@@ -295,9 +306,17 @@ impl UploaderManager {
 
                             let single_config = self.config.clone();
                             let app_sender_clone = self.app_sender.clone();
+                            let reverse_file_list_clone = self.reverse_file_list_cache.clone();
                             thread::spawn(move || {
                                 let thread_app_sender = app_sender_clone.clone();
-                                single_thread(stream, None, rx, single_config, thread_app_sender)
+                                single_thread(
+                                    stream,
+                                    None,
+                                    reverse_file_list_clone,
+                                    rx,
+                                    single_config,
+                                    thread_app_sender,
+                                )
                             }); // end thread
                         }
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -346,6 +365,12 @@ impl UploaderManager {
         self.send_message_to_all_uploaders(MessageSingleUploader::ShutdownConn);
         self.single_uploaders.clear();
         self.single_uploaders_rev.clear();
+
+        // Duped in fn new
+        // We set a _new_ Vec, not just clear it, so that existing threads won't update it out of sync
+        let reverse_file_list_vec: Vec<String> =
+            Vec::with_capacity(self.config.get_shared_users().len());
+        self.reverse_file_list_cache = Arc::new(Mutex::new(reverse_file_list_vec));
     }
 
     fn remove_dead_uploaders(&mut self) {
@@ -364,6 +389,7 @@ impl UploaderManager {
 fn single_thread(
     stream: TcpStream,
     reverse_user: Option<SharedUser>,
+    reverse_file_list: Arc<Mutex<Vec<String>>>,
     rx: Receiver<MessageSingleUploader>,
     single_config: Config,
     thread_app_sender: Sender<AppAggMessage>,
@@ -374,7 +400,7 @@ fn single_thread(
     };
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         let mut single_uploader = SingleUploader::new(rx, single_config, thread_app_sender.clone());
-        match single_uploader.run(&stream, reverse_user) {
+        match single_uploader.run(&stream, reverse_user, reverse_file_list) {
             Ok(res) => res,
             Err(e) => {
                 thread_app_sender
@@ -456,6 +482,7 @@ impl SingleUploader {
         &mut self,
         stream: &TcpStream,
         reverse_user: Option<SharedUser>,
+        reverse_file_list: Arc<Mutex<Vec<String>>>,
     ) -> Result<RunLoopResult, Box<dyn Error>> {
         let client_connecting_addr = stream.peer_addr()?;
 
@@ -516,11 +543,20 @@ impl SingleUploader {
         );
 
         let mut encrypted_stream: EncryptedStream;
-        if reverse_user.is_some() {
-            encrypted_stream = transmitic_stream.connect()?;
-            encrypted_stream.write(MSG_REVERSE, &Vec::new())?;
-        } else {
-            encrypted_stream = transmitic_stream.wait_for_incoming()?;
+        match reverse_user {
+            Some(user) => {
+                let reverse_list_guard = reverse_file_list.lock().unwrap();
+                let rev_message = match reverse_list_guard.contains(&user.nickname) {
+                    true => MSG_REVERSE_NO_LIST,
+                    false => MSG_REVERSE,
+                };
+                drop(reverse_list_guard);
+                encrypted_stream = transmitic_stream.connect()?;
+                encrypted_stream.write(rev_message, &Vec::new())?;
+            }
+            None => {
+                encrypted_stream = transmitic_stream.wait_for_incoming()?;
+            }
         }
         let shared_user = encrypted_stream.shared_user.clone();
         self.nickname = shared_user.nickname.clone();
@@ -550,6 +586,7 @@ impl SingleUploader {
                 &mut encrypted_stream,
                 &everything_file,
                 &everything_file_json_bytes,
+                &reverse_file_list,
             ) {
                 Ok(res) => match res {
                     RunLoopResult::Success => {}
@@ -583,6 +620,7 @@ impl SingleUploader {
         encrypted_stream: &mut EncryptedStream,
         everything_file: &SharedFile,
         everything_file_json_bytes: &[u8],
+        reverse_file_list: &Arc<Mutex<Vec<String>>>,
     ) -> Result<RunLoopResult, Box<dyn Error>> {
         let mut progress_current_time = Instant::now();
 
@@ -626,6 +664,13 @@ impl SingleUploader {
                 }
 
                 if msg == MSG_FILE_LIST_FINAL {
+                    // -- Reverse list data only used when in Reverse Connection
+                    let mut reverse_list_guard = reverse_file_list.lock().unwrap();
+                    if !reverse_list_guard.contains(&self.nickname) {
+                        reverse_list_guard.push(self.nickname.clone());
+                    }
+                    drop(reverse_list_guard);
+                    // --
                     return Ok(RunLoopResult::Success);
                 }
 
@@ -750,7 +795,8 @@ impl SingleUploader {
                 "File transfer to '{}' completed '{}'",
                 self.nickname, client_file_choice
             )))?;
-        } else if client_message == MSG_REVERSE {
+        } else if client_message == MSG_REVERSE || client_message == MSG_REVERSE_NO_LIST {
+            encrypted_stream.reverse_message = client_message;
             return Ok(RunLoopResult::ReverseConnection);
         } else {
             return Err(format!(

@@ -23,6 +23,7 @@ pub struct EncryptedStream {
     pub buffer: Vec<u8>,
     pub shared_user: SharedUser,
     pub private_id_bytes: Vec<u8>,
+    pub reverse_message: u16,
 }
 
 impl EncryptedStream {
@@ -47,6 +48,7 @@ impl EncryptedStream {
             buffer,
             shared_user,
             private_id_bytes,
+            reverse_message: 0,
         }
     }
 
@@ -86,9 +88,8 @@ impl EncryptedStream {
         let _ = &mut self.buffer[..plaintext_msg.len()].copy_from_slice(&plaintext_msg[..]);
         self.increment_nonce()?;
 
-        let payload_size_bytes: u32 = u32::from_be_bytes(
-            self.buffer[MSG_TYPE_SIZE..PAYLOAD_OFFSET].try_into()?,
-        );
+        let payload_size_bytes: u32 =
+            u32::from_be_bytes(self.buffer[MSG_TYPE_SIZE..PAYLOAD_OFFSET].try_into()?);
         let payload_size = payload_size_bytes as usize;
         let msg = self.get_message()?;
 
@@ -150,9 +151,8 @@ impl EncryptedStream {
     }
 
     pub fn get_payload(&self) -> Result<&[u8], Box<dyn Error>> {
-        let payload_size_bytes: u32 = u32::from_be_bytes(
-            self.buffer[MSG_TYPE_SIZE..PAYLOAD_OFFSET].try_into()?,
-        );
+        let payload_size_bytes: u32 =
+            u32::from_be_bytes(self.buffer[MSG_TYPE_SIZE..PAYLOAD_OFFSET].try_into()?);
         let payload_size = payload_size_bytes as usize;
         let payload = &self.buffer[PAYLOAD_OFFSET..PAYLOAD_OFFSET + payload_size];
 
@@ -193,10 +193,10 @@ impl EncryptedStream {
         let nonce_bytes = self.get_nonce_bytes()?;
         let new_nonce = GenericArray::from_slice(&nonce_bytes);
 
-        let cipher_text = match self.cipher.encrypt(
-            new_nonce,
-            self.buffer[..PAYLOAD_OFFSET].as_ref(),
-        ) {
+        let cipher_text = match self
+            .cipher
+            .encrypt(new_nonce, self.buffer[..PAYLOAD_OFFSET].as_ref())
+        {
             Ok(cipher_text) => cipher_text,
             Err(e) => {
                 return Err(
