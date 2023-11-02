@@ -112,6 +112,7 @@ pub fn print_shared_files(shared_file: &SharedFile, spacer: &str) {
 }
 
 fn get_file_size_string(bytes: u64) -> String {
+    let tb: u64 = 1_099_511_627_776;
     let gig: u64 = 1_073_741_824;
     let meg: u64 = 1_048_576;
     let kb: u64 = 1024;
@@ -119,7 +120,10 @@ fn get_file_size_string(bytes: u64) -> String {
     let divisor: u64;
     let unit: String;
 
-    if bytes >= gig {
+    if bytes >= tb {
+        divisor = tb;
+        unit = "TB".to_string();
+    } else if bytes >= gig {
         divisor = gig;
         unit = "GB".to_string();
     } else if bytes >= meg {
