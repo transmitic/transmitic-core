@@ -506,7 +506,7 @@ impl OutgoingDownloader {
 
         let mut refresh_data = HashMap::new();
         for (nickname, data) in refresh_guard.iter() {
-            let in_progress = matches!(data.recv, Some(_));
+            let in_progress = data.recv.is_some();
 
             refresh_data.insert(
                 nickname.clone(),
@@ -565,7 +565,7 @@ fn download_everything_file(
         json_bytes.extend_from_slice(encrypted_stream.get_payload()?);
 
         if json_bytes.len() > MAX_EVERYTHING_FILE_SIZE {
-            return Err(format!(
+            Err(format!(
                 "File list is too large. {} needs to share fewer files with you.",
                 encrypted_stream.shared_user.nickname
             ))?;

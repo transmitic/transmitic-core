@@ -1,6 +1,6 @@
 // TODO update to N after
 pub const TRAN_MAGIC_NUMBER: [u8; 4] = [b'T', b'R', b'A', b'Q'];
-pub const TRAN_API_MAJOR: u16 = 8;
+pub const TRAN_API_MAJOR: u16 = 9;
 pub const TRAN_API_MINOR: u16 = 0;
 
 // TODO REORG all
