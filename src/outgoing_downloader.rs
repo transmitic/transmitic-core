@@ -11,7 +11,7 @@ use crate::{
     shared_file::{
         remove_invalid_files, reset_file_size_string, RefreshData, SelectedDownload, SharedFile,
     },
-    utils::get_file_by_path,
+    utils::{get_file_by_path, resolve_address, tcp_connect},
 };
 use core::time;
 use std::{
@@ -19,7 +19,6 @@ use std::{
     error::Error,
     fs::{self, metadata, File, OpenOptions},
     io::{ErrorKind, Seek, SeekFrom, Write},
-    net::{SocketAddr, TcpStream},
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -458,13 +457,17 @@ impl OutgoingDownloader {
         }
         let config_clone = self.config.clone();
 
+        let app_sender_clone = self.app_sender.clone();
+
         thread::spawn(move || {
+            let thread_app_sender = app_sender_clone.clone();
             for shared_user in config_clone.get_shared_users() {
                 if shared_user.nickname != nickname {
                     continue;
                 }
 
-                let r = refresh_single_user(&config_clone, &shared_user).map_err(|e| e.to_string());
+                let r = refresh_single_user(&config_clone, &shared_user, &thread_app_sender)
+                    .map_err(|e| e.to_string());
                 sx.send(RefreshSharedMessages::FileData(r)).ok();
                 break;
             }
@@ -526,23 +529,28 @@ impl OutgoingDownloader {
 fn refresh_single_user(
     config: &Config,
     shared_user: &SharedUser,
+    app_sender: &Sender<AppAggMessage>,
 ) -> Result<SharedFile, Box<dyn Error>> {
     // TODO duped with single downloader
     // CREATE CONNECTION
-    let mut remote_address = shared_user.ip.clone();
+    let remote_socket_address =
+        resolve_address(&shared_user.ip, &shared_user.port, shared_user, app_sender)?;
 
-    write!(remote_address, ":{}", shared_user.port.clone()).unwrap();
-
-    let remote_socket_address: SocketAddr = match remote_address.parse() {
-        Ok(remote_socket_address) => remote_socket_address,
-        Err(e) => return Err(Box::new(e)),
+    let stream = match tcp_connect(&remote_socket_address) {
+        Ok(s) => s,
+        Err(_) => {
+            return Err(format!(
+                "Failed to refresh single user. Timed out trying to connect to {:?}",
+                remote_socket_address
+            )
+            .into());
+        }
     };
 
-    let stream = TcpStream::connect_timeout(&remote_socket_address, time::Duration::from_secs(2))?;
-
+    let connecting_ip = stream.peer_addr().unwrap().ip().to_string();
     let mut transmitic_stream = TransmiticStream::new(
         stream,
-        remote_address,
+        connecting_ip,
         vec![shared_user.clone()],
         config.get_local_private_id_bytes(),
     );
@@ -743,21 +751,20 @@ impl SingleDownloader {
                 None => {
                     // TODO duped with refresh_shared_with_me
                     // CREATE CONNECTION
-                    let mut remote_address = self.shared_user.ip.clone();
+                    let remote_socket_address = resolve_address(
+                        &self.shared_user.ip,
+                        &self.shared_user.port,
+                        &self.shared_user,
+                        &self.app_sender,
+                    )?;
 
-                    write!(remote_address, ":{}", self.shared_user.port.clone()).unwrap();
                     self.app_sender.send(AppAggMessage::LogInfo(format!(
-                        "Attempt outgoing download {} {}",
-                        self.shared_user.nickname, remote_address
+                        "Attempt outgoing download {} {:?}",
+                        self.shared_user.nickname, remote_socket_address
                     )))?;
 
-                    let remote_socket_address: SocketAddr = remote_address.parse()?;
-
-                    let stream = match TcpStream::connect_timeout(
-                        &remote_socket_address,
-                        time::Duration::from_secs(2),
-                    ) {
-                        Ok(stream) => stream,
+                    let stream = match tcp_connect(&remote_socket_address) {
+                        Ok(s) => s,
                         Err(_) => {
                             self.app_update_offline()?;
                             thread::sleep(time::Duration::from_secs(sleep_secs));
@@ -773,9 +780,10 @@ impl SingleDownloader {
                     };
 
                     // TODO duped with refresh_shared_with_me
+                    let connecting_ip = stream.peer_addr().unwrap().ip().to_string();
                     let mut transmitic_stream = TransmiticStream::new(
                         stream,
-                        remote_address,
+                        connecting_ip,
                         vec![self.shared_user.clone()],
                         self.config.get_local_private_id_bytes().clone(),
                     );

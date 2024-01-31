@@ -2,7 +2,6 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::fs::metadata;
-use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::path::PathBuf;
@@ -914,18 +913,6 @@ fn verify_config_shared_users(shared_users: &[SharedUser]) -> Result<(), Box<dyn
         // Verify full ip and port address
         if user.ip.is_empty() {
             return Err(format!("IP Address for '{}' cannot be empty", user.nickname).into());
-        }
-        let full_address = format!("{}:{}", user.ip, user.port);
-        let ip_parse: Result<SocketAddr, _> = full_address.parse();
-        match ip_parse {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(format!(
-                    "Full address of '{}', '{}' is not valid. Check IP and port. {}",
-                    user.nickname, full_address, e
-                )
-                .into())
-            }
         }
     }
 

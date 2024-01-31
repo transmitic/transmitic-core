@@ -5,6 +5,7 @@ use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::panic::AssertUnwindSafe;
+use std::str::FromStr;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
@@ -21,9 +22,7 @@ use crate::encrypted_stream::EncryptedStream;
 use crate::shared_file::SharedFile;
 use crate::transmitic_core::SingleUploadState;
 use crate::transmitic_stream::TransmiticStream;
-use crate::utils::get_file_by_path;
-
-use std::fmt::Write as _;
+use crate::utils::{get_file_by_path, resolve_address, tcp_connect};
 
 #[cfg(debug_assertions)]
 const MAX_REV_SLEEP: i32 = 15;
@@ -168,7 +167,7 @@ impl UploaderManager {
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
-        let mut ip_address;
+        let mut ip_addresses: Vec<SocketAddr>;
         loop {
             self.stop_incoming = false;
             self.read_receiver();
@@ -179,10 +178,26 @@ impl UploaderManager {
                     continue;
                 }
                 SharingState::Local => {
-                    ip_address = String::from("127.0.0.1");
+                    ip_addresses = vec![
+                        SocketAddr::from_str(&format!("[::1]:{}", self.config.get_sharing_port()))
+                            .unwrap(),
+                        SocketAddr::from_str(&format!(
+                            "127.0.0.1:{}",
+                            self.config.get_sharing_port()
+                        ))
+                        .unwrap(),
+                    ];
                 }
                 SharingState::Internet => {
-                    ip_address = String::from("0.0.0.0");
+                    ip_addresses = vec![
+                        SocketAddr::from_str(&format!("[::0]:{}", self.config.get_sharing_port()))
+                            .unwrap(),
+                        SocketAddr::from_str(&format!(
+                            "0.0.0.0:{}",
+                            self.config.get_sharing_port()
+                        ))
+                        .unwrap(),
+                    ];
                 }
             }
 
@@ -226,7 +241,9 @@ impl UploaderManager {
                         }
 
                         if self.sharing_state == SharingState::Local
-                            && !shared_user.ip.starts_with("127.")
+                            && (shared_user.ip != "127.0.0.1"
+                                && shared_user.ip != "::1"
+                                && shared_user.ip != "[::1]")
                         {
                             continue;
                         }
@@ -249,14 +266,16 @@ impl UploaderManager {
                         thread::spawn(move || {
                             let thread_app_sender = app_sender_clone.clone();
 
-                            let remote_address = format!("{}:{}", shared_user.ip, shared_user.port);
-                            let remote_socket_address: SocketAddr = remote_address.parse().unwrap(); // TODO unwrap
+                            let remote_socket_address = resolve_address(
+                                &shared_user.ip,
+                                &shared_user.port,
+                                &shared_user,
+                                &thread_app_sender,
+                            )
+                            .unwrap();
 
-                            let stream = match TcpStream::connect_timeout(
-                                &remote_socket_address,
-                                time::Duration::from_secs(2),
-                            ) {
-                                Ok(stream) => stream,
+                            let stream = match tcp_connect(&remote_socket_address) {
+                                Ok(s) => s,
                                 Err(_) => {
                                     thread_app_sender
                                         .send(AppAggMessage::LogDebug(format!(
@@ -280,57 +299,105 @@ impl UploaderManager {
                     }
                 }
             } else {
-                write!(ip_address, ":{}", self.config.get_sharing_port()).unwrap();
-                self.app_sender.send(AppAggMessage::LogInfo(format!(
-                    "Waiting for incoming uploads on {}",
-                    ip_address
-                )))?;
-
-                let listener = TcpListener::bind(ip_address)?;
-                listener.set_nonblocking(true)?;
-
-                for stream in listener.incoming() {
-                    self.read_receiver();
-                    if self.stop_incoming {
-                        break;
-                    }
-                    match stream {
-                        Ok(stream) => {
-                            let (sx, rx): (
-                                Sender<MessageSingleUploader>,
-                                Receiver<MessageSingleUploader>,
-                            ) = mpsc::channel();
-
-                            self.remove_dead_uploaders();
-                            self.single_uploaders.push(sx);
-
-                            let single_config = self.config.clone();
-                            let app_sender_clone = self.app_sender.clone();
-                            let reverse_file_list_clone = self.reverse_file_list_cache.clone();
-                            thread::spawn(move || {
-                                let thread_app_sender = app_sender_clone.clone();
-                                single_thread(
-                                    stream,
-                                    None,
-                                    reverse_file_list_clone,
-                                    rx,
-                                    single_config,
-                                    thread_app_sender,
-                                )
-                            }); // end thread
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            thread::sleep(time::Duration::from_secs(1));
-                            continue;
-                        }
+                let mut listeners = Vec::new();
+                for socket_addr in ip_addresses {
+                    match TcpListener::bind(socket_addr) {
+                        Ok(listener) => match listener.set_nonblocking(true) {
+                            Ok(_) => {
+                                self.app_sender
+                                    .send(AppAggMessage::LogInfo(format!(
+                                        "Waiting for incoming uploads on {}:{}",
+                                        listener.local_addr().unwrap().ip(),
+                                        listener.local_addr().unwrap().port(),
+                                    )))
+                                    .ok();
+                                listeners.push(listener);
+                            }
+                            Err(e) => {
+                                self.app_sender
+                                    .send(AppAggMessage::LogError(format!(
+                                        "Failed to set nonblocking on socket {}:{}. {}",
+                                        listener.local_addr().unwrap().ip(),
+                                        listener.local_addr().unwrap().port(),
+                                        e,
+                                    )))
+                                    .ok();
+                            }
+                        },
                         Err(e) => {
-                            self.app_sender.send(AppAggMessage::LogDebug(format!(
-                                "Failed initial client connection {}",
-                                e
-                            )))?;
-                            continue;
+                            self.app_sender
+                                .send(AppAggMessage::LogDebug(format!(
+                                    "Failed to bind to socket {}:{}. {}",
+                                    socket_addr.ip(),
+                                    socket_addr.port(),
+                                    e,
+                                )))
+                                .ok();
                         }
-                    };
+                    }
+                }
+
+                if listeners.is_empty() {
+                    Err("All TcpListeners failed. No incoming connections can be accepted. See log.")?;
+                }
+
+                'all_listeners: loop {
+                    for listener in listeners.iter_mut() {
+                        self.read_receiver();
+                        if self.stop_incoming {
+                            break 'all_listeners;
+                        }
+
+                        match listener.incoming().next() {
+                            Some(stream) => {
+                                match stream {
+                                    Ok(stream) => {
+                                        let (sx, rx): (
+                                            Sender<MessageSingleUploader>,
+                                            Receiver<MessageSingleUploader>,
+                                        ) = mpsc::channel();
+
+                                        self.remove_dead_uploaders();
+                                        self.single_uploaders.push(sx);
+
+                                        let single_config = self.config.clone();
+                                        let app_sender_clone = self.app_sender.clone();
+                                        let reverse_file_list_clone =
+                                            self.reverse_file_list_cache.clone();
+                                        thread::spawn(move || {
+                                            let thread_app_sender = app_sender_clone.clone();
+                                            single_thread(
+                                                stream,
+                                                None,
+                                                reverse_file_list_clone,
+                                                rx,
+                                                single_config,
+                                                thread_app_sender,
+                                            )
+                                        }); // end thread
+                                    }
+                                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                        thread::sleep(time::Duration::from_millis(375));
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        self.app_sender.send(AppAggMessage::LogDebug(format!(
+                                            "Failed initial client connection {}",
+                                            e
+                                        )))?;
+                                        continue;
+                                    }
+                                }
+                            }
+                            None => {
+                                thread::sleep(time::Duration::from_millis(2000));
+                                panic!(
+                                    "Listener iterator stopped. {}",
+                                    listener.local_addr().unwrap().ip()
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -510,7 +577,37 @@ impl SingleUploader {
         //   already has the correct IP to be connecting to, set my the user.
         if !self.config.is_ignore_incoming() && reverse_user.is_none() {
             // Find valid SharedUsers for Transmitic stream to verify
-            shared_users.retain(|shared_user| shared_user.ip == client_connecting_ip);
+            let mut retained_users: Vec<SharedUser> = Vec::new();
+            for shared_user in shared_users {
+                match resolve_address(
+                    &shared_user.ip,
+                    &"0".to_string(),
+                    &shared_user,
+                    &self.app_sender,
+                ) {
+                    Ok(addr) => {
+                        let mut retain_user: bool = false;
+                        for a in addr {
+                            if a.ip().to_string() == client_connecting_ip {
+                                retain_user = true;
+                            } else if a.is_ipv4() && client_connecting_addr.is_ipv6() {
+                                let embedded_ip = format!("::ffff:{}", a.ip());
+                                if embedded_ip == client_connecting_ip {
+                                    retain_user = true;
+                                }
+                            }
+
+                            if retain_user {
+                                retained_users.push(shared_user.clone());
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => continue,
+                }
+            }
+
+            shared_users = retained_users;
 
             if shared_users.is_empty() {
                 self.app_sender.send(AppAggMessage::LogWarning(format!(
@@ -537,7 +634,7 @@ impl SingleUploader {
         // TODO duped with refresh_single_user and outgoing downloader
         let mut transmitic_stream = TransmiticStream::new(
             stream.try_clone()?,
-            client_connecting_ip,
+            client_connecting_ip.clone(),
             shared_users,
             self.config.get_local_private_id_bytes(),
         );
@@ -568,8 +665,8 @@ impl SingleUploader {
         }
 
         self.app_sender.send(AppAggMessage::LogInfo(format!(
-            "User successfully connected: '{}'",
-            self.nickname
+            "User successfully connected: '{}' - '{}'",
+            self.nickname, client_connecting_ip,
         )))?;
 
         let everything_file =
