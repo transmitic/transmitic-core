@@ -1,10 +1,10 @@
-use base64::{engine::general_purpose, Engine};
 use ring::{
     rand,
     signature::{self, KeyPair},
 };
 use std::{error::Error, vec::Vec};
-extern crate base64;
+
+use crate::base64;
 
 pub const NONCE_MAX: u128 = 79_228_162_514_264_337_593_543_950_335;
 pub const NONCE_INIT: u128 = 0;
@@ -29,10 +29,10 @@ pub fn generate_id_pair() -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
 }
 
 pub fn get_bytes_from_base64_str(string: &str) -> Result<Vec<u8>, Box<dyn Error>> {
-    let decoded = general_purpose::STANDARD.decode(string)?;
+    let decoded = base64::decode(string)?;
     Ok(decoded)
 }
 
 pub fn get_base64_str_from_bytes(bytes: Vec<u8>) -> String {
-    general_purpose::STANDARD.encode(bytes)
+    base64::encode(&bytes)
 }

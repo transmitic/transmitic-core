@@ -12,20 +12,18 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
-use base64::engine::general_purpose;
-use base64::Engine;
 use ring::{
     digest, pbkdf2,
     rand::{SecureRandom, SystemRandom},
 };
 
-extern crate base64;
 use ring::signature;
 use ring::signature::Ed25519KeyPair;
 use ring::signature::KeyPair;
 use serde::{Deserialize, Serialize};
 
 use crate::app_aggregator::AppAggMessage;
+use crate::base64;
 use crate::crypto;
 use crate::crypto::NONCE_INIT;
 use crate::crypto::NONCE_MAX;
@@ -290,7 +288,7 @@ impl Config {
 
     pub fn create_new_id(&mut self) -> Result<(), Box<dyn Error>> {
         let (private_id_bytes, _) = crypto::generate_id_pair()?;
-        let private_id_string = general_purpose::STANDARD.encode(private_id_bytes);
+        let private_id_string = base64::encode(&private_id_bytes);
 
         let mut new_config_file = self.config_file.clone();
         new_config_file.my_private_id = private_id_string;
@@ -585,7 +583,7 @@ fn create_new_config(
 ) -> Result<(), Box<dyn Error>> {
     let (private_id_bytes, _) = crypto::generate_id_pair()?;
 
-    let private_id_string = general_purpose::STANDARD.encode(private_id_bytes);
+    let private_id_string = base64::encode(&private_id_bytes);
 
     let mut empty_config: ConfigFile = ConfigFile {
         my_private_id: private_id_string,
@@ -669,13 +667,13 @@ fn get_encrypted_config_str(
         Ok(cipher_text) => cipher_text,
         Err(e) => return Err(format!("Failed to encrypt config with cipher. {}", e).into()),
     };
-    let ciphertext_b64 = general_purpose::STANDARD.encode(ciphertext);
+    let ciphertext_b64 = base64::encode(&ciphertext);
 
     let encrypted_config = EncryptedConfig {
         version: config_version,
         nonce: nonce.to_string(),
         pbkdf2_iterations: iterations,
-        salt: general_purpose::STANDARD.encode(salt),
+        salt: base64::encode(&salt),
         encrypted_config: ciphertext_b64,
     };
 
@@ -1042,8 +1040,8 @@ fn read_encrypted_config(
 
     let nonce = encrypted_config.nonce.parse::<u128>()?;
     let iterations = encrypted_config.pbkdf2_iterations;
-    let salt = general_purpose::STANDARD.decode(encrypted_config.salt)?;
-    let encrypted_bytes = general_purpose::STANDARD.decode(encrypted_config.encrypted_config)?;
+    let salt = base64::decode(&encrypted_config.salt)?;
+    let encrypted_bytes = base64::decode(&encrypted_config.encrypted_config)?;
 
     // Derive AES key
     let mut aes_key: Credential = [0u8; CREDENTIAL_LEN];

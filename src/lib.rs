@@ -1,4 +1,5 @@
 pub mod app_aggregator;
+pub mod base64;
 pub mod config;
 pub mod core_consts;
 pub mod crypto;
