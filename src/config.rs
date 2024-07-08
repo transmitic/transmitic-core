@@ -540,16 +540,23 @@ pub fn create_config_dir() -> Result<(), Box<dyn Error>> {
 
 pub fn get_path_transmitic_config_dir() -> Result<PathBuf, Box<dyn Error>> {
     let mut path;
-    if cfg!(target_os = "macos") && is_transmitic_installed()? {
-        let home =
-            env::var("HOME").or(Err("Cannot find HOME directory to get config directory"))?;
-        path = PathBuf::from(home);
-        path.push("Library");
-        path.push("Application Support");
-        path.push("Transmitic");
-    } else {
-        path = env::current_exe()?;
-        path.pop();
+    match env::var("TRAN_PATH_CONFIG") {
+        Ok(p) => {
+            path = PathBuf::from(p);
+        }
+        Err(_) => {
+            if cfg!(target_os = "macos") && is_transmitic_installed()? {
+                let home = env::var("HOME")
+                    .or(Err("Cannot find HOME directory to get config directory"))?;
+                path = PathBuf::from(home);
+                path.push("Library");
+                path.push("Application Support");
+                path.push("Transmitic");
+            } else {
+                path = env::current_exe()?;
+                path.pop();
+            }
+        }
     }
     path.push("transmitic_config");
     Ok(path)
