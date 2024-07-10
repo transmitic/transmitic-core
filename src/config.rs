@@ -322,17 +322,23 @@ impl Config {
         let mut path = self.config_file.path_downloads.clone();
         if path.is_empty() {
             let mut default_path;
-            if is_transmitic_installed()? {
-                default_path = match self.get_users_downloads_dir() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        let err = format!("ERROR: Could not find HOME directory in order to get downloads dir. {}", e);
-                        Err(err)?
+
+            match env::var("TRAN_PATH_DOWNLOADS") {
+                Ok(p) => default_path = PathBuf::from(p),
+                Err(_) => {
+                    if is_transmitic_installed()? {
+                        default_path = match self.get_users_downloads_dir() {
+                            Ok(p) => p,
+                            Err(e) => {
+                                let err = format!("ERROR: Could not find HOME directory in order to get downloads dir. {}", e);
+                                Err(err)?
+                            }
+                        };
+                    } else {
+                        default_path = env::current_exe()?;
+                        default_path.pop();
                     }
-                };
-            } else {
-                default_path = env::current_exe()?;
-                default_path.pop();
+                }
             }
 
             default_path.push("Transmitic Downloads");
